@@ -1,0 +1,4 @@
+pdfplumber
+openpyxl
+python-dotenv
+selenium

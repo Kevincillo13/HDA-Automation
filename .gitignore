@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment files
+.env
+config/.env.local
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Runtime data
+runtime/downloads/*
+runtime/outputs/*
+runtime/logs/*
+runtime/evidence/*
+
+# Keep folders
+!runtime/downloads/.gitkeep
+!runtime/outputs/.gitkeep
+!runtime/logs/.gitkeep
+!runtime/evidence/.gitkeep
+
+# OS files
+Thumbs.db
+.DS_Store
