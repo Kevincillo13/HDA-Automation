@@ -118,8 +118,11 @@ def parse_city_state_zip(text: str) -> tuple[str, str, str, str]:
     if len(parts[-1]) == 2 and parts[-1].isalpha():
         state_code = parts.pop().upper()
         state = state_code
-        if state_code in US_STATES.values(): country = "US"
-        elif state_code in CAN_PROVINCES.values(): country = "CA"
+        if state_code in US_STATES.values():
+            country = "US"
+        elif state_code in CAN_PROVINCES.values():
+            state = state_code
+            country = "CA"
     elif potential_state in US_STATES:
         state = US_STATES[potential_state]
         country = "US"
@@ -167,6 +170,17 @@ def normalize_numeric_code(value: str, width: int = 10) -> str:
     if cleaned_value.isdigit():
         return cleaned_value.zfill(width)
     return cleaned_value
+
+
+def classify_mail_group(company_code: str) -> str:
+    normalized = str(company_code or "").strip().upper()
+    if normalized in {"1000", "2000", "E100"}:
+        return "FMS"
+    if normalized in {"0032", "0016", "0133", "0060", "1010", "5500", "0224"}:
+        return "AFS"
+    if normalized.startswith("E"):
+        return "AFS"
+    return "AFS"
 
 def apply_business_rules(raw_data: dict) -> dict:
     """Applies business logic to transform raw extracted data into a structured format for the CSV."""

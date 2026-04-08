@@ -140,32 +140,53 @@ class HDAClient:
         )
 
         discovered_records: dict[str, TicketRecord] = {}
-        max_passes = 12
+        max_pages = 20
+        max_scroll_passes = 12
 
-        for pass_index in range(1, max_passes + 1):
-            snapshot = self._collect_grid_records_from_dom()
+        for page_index in range(1, max_pages + 1):
+            self.logger.info("Scanning Payments grid page %s", page_index)
+            page_records: dict[str, TicketRecord] = {}
+
+            for pass_index in range(1, max_scroll_passes + 1):
+                snapshot = self._collect_grid_records_from_dom()
+                self.logger.info(
+                    "Grid page %s scan pass %s | dom_rows=%s | rows_with_ticket_id=%s",
+                    page_index,
+                    pass_index,
+                    len(snapshot),
+                    len([row for row in snapshot if row.ticket_id]),
+                )
+
+                for record in snapshot:
+                    if not record.ticket_id:
+                        continue
+                    page_records.setdefault(record.ticket_id, record)
+                    discovered_records.setdefault(record.ticket_id, record)
+
+                moved = self._scroll_grid_container()
+                self.logger.info(
+                    "Grid page %s scan pass %s | page_unique_ticket_ids=%s | total_unique_ticket_ids=%s | scroll_moved=%s",
+                    page_index,
+                    pass_index,
+                    len(page_records),
+                    len(discovered_records),
+                    moved,
+                )
+                if not moved:
+                    break
+                self._pause(0.5)
+
+            page_ticket_ids = [ticket_id for ticket_id in page_records if ticket_id]
             self.logger.info(
-                "Grid scan pass %s | dom_rows=%s | rows_with_ticket_id=%s",
-                pass_index,
-                len(snapshot),
-                len([row for row in snapshot if row.ticket_id]),
+                "Completed Payments grid page %s | unique_ticket_ids=%s | first_ticket=%s | last_ticket=%s",
+                page_index,
+                len(page_ticket_ids),
+                page_ticket_ids[0] if page_ticket_ids else "<none>",
+                page_ticket_ids[-1] if page_ticket_ids else "<none>",
             )
 
-            for record in snapshot:
-                if not record.ticket_id:
-                    continue
-                discovered_records.setdefault(record.ticket_id, record)
-
-            moved = self._scroll_grid_container()
-            self.logger.info(
-                "Grid scan pass %s | unique_ticket_ids=%s | scroll_moved=%s",
-                pass_index,
-                len(discovered_records),
-                moved,
-            )
-            if not moved:
+            if not self._go_to_next_grid_page(page_ticket_ids, page_index):
                 break
-            self._pause(0.5)
 
         ticket_records = list(discovered_records.values())
         self.logger.info("Filtered grid rows with ticket IDs: %s", len(ticket_records))
@@ -635,6 +656,68 @@ class HDAClient:
         )
         self.logger.info("Grid scroll result: %s", result)
         return bool(result.get("moved"))
+
+    def _go_to_next_grid_page(self, current_page_ticket_ids: list[str], page_index: int) -> bool:
+        if not self.driver:
+            raise RuntimeError("Browser session not started.")
+
+        next_page_xpath = (
+            "//div[contains(@class,'x-toolbar') or contains(@class,'x-pagingtoolbar')]"
+            "//a[.//span[contains(@class, 'x-tbar-page-next')]]"
+        )
+        next_buttons = self.driver.find_elements(By.XPATH, next_page_xpath)
+        if not next_buttons:
+            self.logger.info(
+                "Grid pagination | page=%s | next_button_found=False",
+                page_index,
+            )
+            return False
+
+        next_button = next_buttons[0]
+        classes = (next_button.get_attribute("class") or "").strip()
+        aria_disabled = (next_button.get_attribute("aria-disabled") or "").strip().lower()
+        is_disabled = (
+            "x-item-disabled" in classes
+            or "disabled" in classes.lower()
+            or aria_disabled == "true"
+        )
+        self.logger.info(
+            "Grid pagination | page=%s | next_button_found=True | disabled=%s | classes=%s | aria_disabled=%s",
+            page_index,
+            is_disabled,
+            classes or "<none>",
+            aria_disabled or "<none>",
+        )
+        if is_disabled:
+            return False
+
+        before_signature = tuple(current_page_ticket_ids[:5])
+        self._scroll_into_view(next_button)
+        self.driver.execute_script("arguments[0].click();", next_button)
+        self.logger.info("Grid pagination | clicked next page button from page %s", page_index)
+
+        try:
+            WebDriverWait(self.driver, 15).until(
+                lambda _: self._grid_page_changed(before_signature)
+            )
+            self._pause(1.0)
+            return True
+        except TimeoutException:
+            self.logger.warning(
+                "Grid pagination | next page click from page %s did not produce a detectable page change.",
+                page_index,
+            )
+            return False
+
+    def _grid_page_changed(self, previous_signature: tuple[str, ...]) -> bool:
+        if not self.driver:
+            raise RuntimeError("Browser session not started.")
+
+        current_rows = self._collect_grid_records_from_dom()
+        current_signature = tuple(
+            row.ticket_id for row in current_rows if row.ticket_id
+        )[:5]
+        return bool(current_signature) and current_signature != previous_signature
 
     def _log_grid_debug(self) -> None:
         if not self.driver:

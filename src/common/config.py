@@ -39,6 +39,8 @@ class Settings:
     mail_test_recipient: str = os.getenv("MAIL_TEST_RECIPIENT", "")
     mail_primary_recipient: str = os.getenv("MAIL_PRIMARY_RECIPIENT", "")
     mail_secondary_recipient: str = os.getenv("MAIL_SECONDARY_RECIPIENT", "")
+    mail_fms_recipient: str = os.getenv("MAIL_FMS_RECIPIENT", "")
+    mail_afs_recipient: str = os.getenv("MAIL_AFS_RECIPIENT", "")
     mail_usd_recipient: str = os.getenv("MAIL_USD_RECIPIENT", "")
     mail_cad_recipient: str = os.getenv("MAIL_CAD_RECIPIENT", "")
     mail_summary_recipient: str = os.getenv("MAIL_SUMMARY_RECIPIENT", "")
@@ -52,6 +54,15 @@ class Settings:
     smtp_sender: str = os.getenv("SMTP_SENDER", "")
     smtp_use_tls: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
     smtp_use_ssl: bool = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
+    sap_username: str = os.getenv("SAP_USERNAME", "")
+    sap_password: str = os.getenv("SAP_PASSWORD", "")
+    sap_connection_name: str = os.getenv("SAP_CONNECTION_NAME", "")
+    sap_client: str = os.getenv("SAP_CLIENT", "500")
+    sap_language: str = os.getenv("SAP_LANGUAGE", "EN")
+    sap_executable_path: str = os.getenv(
+        "SAP_EXECUTABLE_PATH",
+        r"C:\Program Files (x86)\SAP\FrontEnd\SAPgui\saplogon.exe",
+    )
 
 
 def get_settings() -> Settings:

@@ -5,7 +5,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from src.processing.logic import normalize_numeric_code
+from src.processing.logic import classify_mail_group, normalize_numeric_code
 
 
 AP15_HEADERS = [
@@ -42,7 +42,7 @@ AP15_HEADERS = [
 
 
 class AP15Builder:
-    """Genera archivos CSV AP15 agrupados por VendorNum y Currency."""
+    """Genera archivos CSV AP15 agrupados por MailGroup, VendorNum y Currency."""
 
     def __init__(self, output_dir: str) -> None:
         self.output_dir = Path(output_dir)
@@ -53,16 +53,17 @@ class AP15Builder:
         records: list[dict[str, Any]],
         file_suffix: str = "",
     ) -> list[str]:
-        grouped_records: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+        grouped_records: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
         for record in records:
+            mail_group = classify_mail_group(self._clean(record.get("CompanyCode")))
             vendor_num = self._clean(record.get("VendorNum"))
             currency = self._clean(record.get("Currency"))
-            grouped_records[(vendor_num, currency)].append(record)
+            grouped_records[(mail_group, vendor_num, currency)].append(record)
 
         output_paths: list[str] = []
         suffix = f"_{file_suffix}" if file_suffix else ""
-        for (vendor_num, currency), grouped in grouped_records.items():
-            file_path = self.output_dir / f"AP15_{vendor_num}_{currency}{suffix}.csv"
+        for (mail_group, vendor_num, currency), grouped in grouped_records.items():
+            file_path = self.output_dir / f"AP15_{mail_group}_{vendor_num}_{currency}{suffix}.csv"
             with file_path.open("w", encoding="utf-8-sig", newline="") as csv_file:
                 writer = csv.DictWriter(csv_file, fieldnames=AP15_HEADERS)
                 writer.writeheader()
@@ -80,6 +81,7 @@ class AP15Builder:
         amount = record.get("Amount", "")
         cost_center = self._normalize_cost_center(record.get("CostCenter"))
         gl_account = self._normalize_account(record.get("GLAccount"))
+        profit_center, cost_center = self._route_center_fields(cost_center, gl_account)
 
         return {
             "Header Company code": company_code,
@@ -93,7 +95,7 @@ class AP15Builder:
             "G/L account Item Description": "",
             "Tax Type": "",
             "Company Code": company_code,
-            "Profit Center 10 DIGITS": "",
+            "Profit Center 10 DIGITS": profit_center,
             "Cost Center 10 DIGITS": cost_center,
             "WBS": self._clean(record.get("WBS")),
             "Order": "",
@@ -123,6 +125,21 @@ class AP15Builder:
     def _normalize_account(self, value: Any) -> str:
         cleaned = self._clean(value).replace(" ", "")
         return "" if cleaned == "Empty" else cleaned
+
+    def _route_center_fields(self, center_value: str, account_value: str) -> tuple[str, str]:
+        normalized_account = self._clean(account_value).upper()
+        if not center_value:
+            return "", ""
+
+        profit_prefixes = ("11", "12", "13", "P1", "P2", "P3")
+        cost_prefixes = ("14", "15", "16", "P4", "P5", "P6")
+
+        if normalized_account.startswith(profit_prefixes):
+            return center_value, ""
+        if normalized_account.startswith(cost_prefixes):
+            return "", center_value
+
+        return "", center_value
 
     def _clean(self, value: Any) -> str:
         if value is None:

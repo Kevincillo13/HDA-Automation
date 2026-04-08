@@ -9,6 +9,9 @@ Transformaciones principales:
   - `E100` -> `900000`
   - `1000` o `2000` -> `900010`
   - default -> `8000001`
+- Clasificacion de correo:
+  - `FMS`: `1000`, `2000`, `E100`
+  - `AFS`: `0032`, `0016`, `0133`, `0060`, `1010`, `5500`, `0224` y cualquier `CompanyCode` que empiece con `E` excepto `E100`
 - `Invoice Number`:
   - usar `Invoice Number`
   - si viene vacio, usar `ticket_id`
@@ -38,7 +41,7 @@ Validaciones activas:
 
 - Se genera un CSV por grupo `VendorNum + Currency`
 - Nombre actual:
-  - `AP15_{VendorNum}_{Currency}_{run_id}.csv`
+  - `AP15_{MailGroup}_{VendorNum}_{Currency}_{run_id}.csv`
 - Salida actual:
   - `runtime/outputs/YYYYMMDD/`
 
