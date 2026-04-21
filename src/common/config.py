@@ -54,11 +54,17 @@ class Settings:
     smtp_sender: str = os.getenv("SMTP_SENDER", "")
     smtp_use_tls: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
     smtp_use_ssl: bool = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
-    sap_username: str = os.getenv("SAP_USERNAME", "")
-    sap_password: str = os.getenv("SAP_PASSWORD", "")
-    sap_connection_name: str = os.getenv("SAP_CONNECTION_NAME", "")
-    sap_client: str = os.getenv("SAP_CLIENT", "500")
+    sap_username_fms: str = os.getenv("SAP_USERNAME_FMS", "")
+    sap_password_fms: str = os.getenv("SAP_PASSWORD_FMS", "")
+    sap_username_afs: str = os.getenv("SAP_USERNAME_AFS", "")
+    sap_password_afs: str = os.getenv("SAP_PASSWORD_AFS", "")
+    sap_connection_name_fms: str = os.getenv("SAP_CONNECTION_NAME_FMS", "")
+    sap_connection_name_afs: str = os.getenv("SAP_CONNECTION_NAME_AFS", "")
+    sap_client_fms: str = os.getenv("SAP_CLIENT_FMS", "500")
+    sap_client_afs: str = os.getenv("SAP_CLIENT_AFS", "400")
     sap_language: str = os.getenv("SAP_LANGUAGE", "EN")
+    sap_tcode_fms: str = os.getenv("SAP_TCODE_FMS", "ZFIN_AP_NONPO_LUCY4")
+    sap_tcode_afs: str = os.getenv("SAP_TCODE_AFS", "ZFIN_AP_NONPO_LUCY4")
     sap_executable_path: str = os.getenv(
         "SAP_EXECUTABLE_PATH",
         r"C:\Program Files (x86)\SAP\FrontEnd\SAPgui\saplogon.exe",

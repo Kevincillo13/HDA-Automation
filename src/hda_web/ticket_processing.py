@@ -1,4 +1,5 @@
 import traceback
+import time
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -386,6 +387,76 @@ def _resolve_mail_recipients(settings: Any, mail_type: str) -> list[str]:
     return [recipient.strip() for recipient in normalized.split(",") if recipient.strip()]
 
 
+def _collect_one_time_checks_with_retry(
+    client: HDAClient,
+    logger: Any,
+    attempts: int = 3,
+    wait_seconds: float = 4.0,
+) -> tuple[list[TicketRecord], list[TicketRecord]]:
+    last_tickets: list[TicketRecord] = []
+    one_time_checks: list[TicketRecord] = []
+
+    for attempt in range(1, attempts + 1):
+        if attempt > 1:
+            logger.warning(
+                "Retrying Payments grid extraction because no 'OneTime Check' tickets were detected on attempt %s/%s.",
+                attempt - 1,
+                attempts,
+            )
+            try:
+                client.click_payments_tile()
+            except Exception as exc:
+                logger.warning(
+                    "Payments tile reactivation failed before retry %s/%s: %s",
+                    attempt,
+                    attempts,
+                    exc,
+                )
+            client.log_debug_state(f"payments_retry_{attempt}")
+            time.sleep(wait_seconds)
+
+        tickets = client.read_payment_grid_rows()
+        last_tickets = tickets
+        one_time_checks = [
+            ticket for ticket in tickets if ticket.payment_method.strip() == "OneTime Check"
+        ]
+
+        empty_payment_method = len(
+            [ticket for ticket in tickets if not ticket.payment_method.strip()]
+        )
+        logger.info(
+            "Payments extraction attempt %s/%s | total_tickets=%s | one_time_checks=%s | empty_payment_method=%s",
+            attempt,
+            attempts,
+            len(tickets),
+            len(one_time_checks),
+            empty_payment_method,
+        )
+
+        if one_time_checks:
+            return last_tickets, one_time_checks
+
+        if tickets:
+            preview = [
+                f"{ticket.ticket_id}:{ticket.payment_method or '<empty>'}"
+                for ticket in tickets[:10]
+            ]
+            logger.warning(
+                "No 'OneTime Check' tickets detected on attempt %s/%s despite visible rows. Sample payment methods: %s",
+                attempt,
+                attempts,
+                preview,
+            )
+        else:
+            logger.warning(
+                "No tickets were visible on Payments extraction attempt %s/%s.",
+                attempt,
+                attempts,
+            )
+
+    return last_tickets, one_time_checks
+
+
 def process_all_tickets() -> None:
     """
     Orquesta el proceso completo de HDA:
@@ -426,17 +497,16 @@ def process_all_tickets() -> None:
 
         # --- LECTURA Y FILTRADO DE TICKETS ---
         current_stage = "ticket grid extraction"
-        tickets = client.read_payment_grid_rows()
+        tickets, one_time_checks = _collect_one_time_checks_with_retry(client, logger)
         logger.info("Grid extraction complete. Total tickets visible=%s", len(tickets))
-        one_time_checks = [
-            ticket for ticket in tickets if ticket.payment_method.strip() == "OneTime Check"
-        ]
         logger.info(
             "Processing %s 'OneTime Check' tickets.", len(one_time_checks)
         )
 
         if not one_time_checks:
-            logger.warning("No 'OneTime Check' tickets found. Exiting process.")
+            logger.warning(
+                "No 'OneTime Check' tickets found after retrying Payments extraction. Exiting process."
+            )
             return
 
         # --- BUCLE DE PROCESAMIENTO ---

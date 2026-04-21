@@ -1,0 +1,346 @@
+HDA Automation - Project Context
+Last updated: 2026-04-09
+
+Purpose
+- Windows VM automation for HDA Payment tickets.
+- Process 1: overnight run that reads OneTime Check tickets, validates them, generates AP15 CSVs, validates them in SAP, then emails final files.
+- Process 2: later follow-up process that will read response emails and take follow-up actions. Not urgent yet.
+
+Current high-level status
+- HDA login/navigation: working.
+- Payments grid reading: working.
+- Pagination beyond 50 rows: working.
+- OneTime Check filtering: working.
+- Ticket opening: working via context menu/open.
+- Ticket detail parsing: working.
+- Local business rules and validation: working, but still evolving.
+- CSV generation: working.
+- Human-readable summary generation: working.
+- SMTP sending: working.
+- SAP login/TCode open/base form fill/test execution: working enough to test.
+- SAP result-table inspection/logging: working.
+- Rejecting tickets in HDA: NOT implemented yet.
+- Process 2: NOT implemented yet.
+
+Important repo areas
+- src/hda_web/client.py
+  HDA browser automation, grid reading, pagination, ticket opening/closing.
+- src/hda_web/ticket_processing.py
+  Main Process 1 orchestration.
+- src/hda_web/ticket_parser.py
+  Ticket detail extraction.
+- src/processing/logic.py
+  Business rules, parsing, local validations, FMS/AFS classification.
+- src/excel_builder/builder.py
+  AP15 CSV generation.
+- src/mailer/client.py
+  SMTP sending.
+- src/sap/client.py
+  SAP GUI scripting client and current SAP test harness.
+- src/common/config.py
+  Settings/env loading.
+
+Current entry points
+- Main Process 1:
+  python -m src.main
+  or
+  python -m src.hda_web.ticket_processing
+
+- SAP isolated testing:
+  python -m src.sap.client
+
+Current HDA behavior
+- Reads Payments grid without depending on viewport.
+- Uses DOM scraping with created date discovery from the grid header "Fecha".
+- Handles multiple pages using pager buttons, not just first 50 rows.
+- Deduplicates tickets across pages.
+- Keeps browser open if configured.
+
+Current output behavior
+- Outputs go under runtime/outputs/YYYYMMDD/
+- Human summary file:
+  log_summary_YYYYMMDD_HHMMSS.txt
+- CSV names now include mail group:
+  AP15_FMS_...
+  AP15_AFS_...
+- Recent examples:
+  AP15_FMS_900010_USD_process_all_tickets_...
+  AP15_AFS_8000001_USD_process_all_tickets_...
+
+SMTP/email status
+- SMTP sending already works.
+- Supports:
+  MAIL_TEST_RECIPIENT
+  MAIL_FMS_RECIPIENT
+  MAIL_AFS_RECIPIENT
+  MAIL_SUMMARY_RECIPIENT
+  MAIL_ERROR_RECIPIENT
+  MAIL_BCC_RECIPIENT
+- Process 1 currently sends:
+  FMS files
+  AFS files
+  summary email
+  failure email if run crashes
+
+Current CSV partitioning
+- Current builder groups by:
+  Mail group (FMS/AFS)
+  VendorNum
+  Currency
+- It does NOT currently split by CompanyCode.
+- Naming is driven by classify_mail_group(company_code) in src/processing/logic.py
+
+Mail-group classification rule
+- FMS:
+  1000, 2000, E100
+- AFS:
+  0032, 0016, 0133, 0060, 1010, 5500, 0224
+  and any company code starting with E except E100
+- Current implementation in logic.py:
+  classify_mail_group(company_code)
+
+Business rules already implemented
+- Invoice Number:
+  uses "Invoice Number", fallback to ticket Id.
+- Invoice Date:
+  uses "Invoice Date", fallback to Created from HDA grid.
+- VendorNum:
+  E100 -> 900000
+  1000/2000 -> 900010
+  else -> 8000001
+- Cost center normalization:
+  removes hyphens/spaces.
+  if numeric after cleaning -> pad to 10 digits.
+  if alphanumeric -> keep cleaned value.
+- Profit/Cost Center routing based on Account:
+  If Account starts with 11, 12, 13, P1, P2, P3:
+    center goes to Profit Center 10 DIGITS
+    Cost Center 10 DIGITS left blank
+  If Account starts with 14, 15, 16, P4, P5, P6:
+    center stays in Cost Center 10 DIGITS
+    Profit Center blank
+  Else:
+    current builder defaults to Cost Center
+
+ZIP / address rule status
+- Reverted experimental override that forced OH -> ON in Canadian context.
+- Current policy:
+  prioritize what the ticket/address actually says.
+- Example:
+  "Mason OH 45040" remains OH / 45040.
+- Team confirmed that was correct for now.
+
+Known weird address case
+- Some tickets may be company/currency Canada but still contain a US-looking address/ZIP.
+- Current decision:
+  do not auto-correct those based on business context alone.
+  preserve what the ticket says.
+
+Local validation status
+- validate_ticket_data in src/processing/logic.py currently checks:
+  Amount not zero
+  Zip not missing
+  Cost/Profit Center not missing
+  GL Account not missing
+  10-digit requirement for numeric GLs
+  if GL starts with P, VendorNum must be 8000001
+- More validations are expected later.
+
+SAP knowledge gathered so far
+- System split:
+  FMS -> RP1
+  AFS -> LUP
+- TCode:
+  ZFIN_AP_NONPO_LUCY4
+  (confirmed same for AFS and FMS)
+- Posting date:
+  always current day
+  can be typed like MMDDYYYY, e.g. 04092026
+- Separator:
+  must be ","
+- Test checkbox:
+  MUST be selected
+  very important, otherwise posting could happen.
+- Validation is run one CSV at a time.
+- SAP does NOT care much about the CSV filename.
+- For test execution, the form must have coherent values (system-related, company code field filled, currency filled).
+- Company code field must be filled, but Ingrid indicated the test can still run even if CSV has multiple company codes; SAP is not using that field strictly as a partition gate in test mode.
+- Result interpretation:
+  look at the middle result table
+  last column is message
+  same source row can appear repeated if multiple errors exist
+
+SAP valid combination tables shared by business
+
+AFS table
+- 0032 | 8000001 | USD
+- 0016 | 8000001 | CAD
+- 1010 | 8000001 | USD
+- 0060 | 8000001 | CAD or USD
+- 0182 | 8000001 | USD
+- 0124 | 8000001 | USD
+- 0133 | 8000001 | USD
+- 5500 | no aplica | no aplica
+- 5700 | no aplica | no aplica
+- all company codes starting with E except E100 | 8000001 | USD
+
+Interpretation from meeting:
+- cases marked "no aplica" likely should be rejected
+- this table should become a pre-SAP validation rule
+
+FMS table
+- 1000 | 900010 | USD
+- 2000 | 900010 | CAD
+- E100 | 900000 | USD
+
+Interpretation:
+- if a generated CSV row combination falls outside these allowed combos, likely reject before SAP.
+
+Important SAP result-table discovery
+- Latest inspected SAP result table ID:
+  wnd[0]/shellcont/shell/shellcont[1]/shell
+- Columns discovered in log:
+  LINE_NO
+  LIFNR
+  XBLNR
+  BELNR
+  DIS_TYPE
+  INV_DATE
+  DMBTR
+  WAERS
+  KOSTL
+  PRCTR
+  HKONT
+  MESSAGES
+
+Interpretation of SAP result columns
+- LIFNR = Vendor
+- XBLNR = Invoice Number
+- WAERS = Currency
+- KOSTL = Cost Center
+- PRCTR = Profit Center
+- HKONT = Account / GL
+- MESSAGES = validation message
+
+Important SAP result behavior
+- One logical CSV row may produce multiple result rows if SAP returns multiple messages.
+- In the inspected AFS run, all rows had LINE_NO=0 and the same XBLNR=735105G, but multiple error messages.
+- Therefore the result parser should group rows by a stable key, likely:
+  XBLNR
+  and maybe LINE_NO as secondary
+
+Latest known SAP sample messages
+- Error in document: BKPFF $ LUPPRD400
+- Profit center LUX1/50442 does not exist for 04/09/2026
+- Profit center 50442 not found in controlling area LUX1
+
+This implies
+- It is feasible to:
+  run SAP test
+  read result table
+  group messages by XBLNR
+  map XBLNR back to CSV row / ticket
+  remove failing rows and re-test
+
+Current SAP code status
+- src/sap/client.py currently supports:
+  start()
+  login(system_group)
+  open_validation_context(csv_path)
+  open_tcode(tcode)
+  fill_validation_form(csv_path, posting_date, company_code, currency, separator, test_mode)
+  execute_validation()
+  inspect_validation_results()
+  prepare_and_execute_validation(csv_path, ...)
+- Current __main__ in src/sap/client.py is used as a manual test harness and may be pointing to a specific CSV path. Check before reusing.
+
+Current SAP env expectations
+- SAP_USERNAME_FMS
+- SAP_PASSWORD_FMS
+- SAP_USERNAME_AFS
+- SAP_PASSWORD_AFS
+- SAP_CONNECTION_NAME_FMS
+- SAP_CONNECTION_NAME_AFS
+- SAP_CLIENT_FMS
+- SAP_CLIENT_AFS
+- SAP_LANGUAGE
+- SAP_TCODE_FMS
+- SAP_TCODE_AFS
+- SAP_EXECUTABLE_PATH
+
+Current values inferred from discussion
+- FMS client should be 500
+- AFS client should be 400
+- FMS connection likely RP1
+- AFS connection likely LUP
+
+Current SAP unresolved issues
+- FMS credentials/connection were failing with:
+  "Name or password is incorrect (repeat logon)"
+- This may be:
+  wrong FMS credentials
+  wrong RP1 client
+  wrong RP1 connection
+  or account permissions
+- AFS/LUP was working better for tests.
+
+Expected final Process 1 flow
+1. Login HDA
+2. Read all OneTime Check tickets
+3. Run local validation
+4. Reject obviously invalid local rows later (not implemented yet)
+5. Generate CSV candidates
+6. Run SAP test validation on each candidate CSV
+7. Parse SAP result table
+8. Remove bad rows / reject corresponding tickets
+9. Rebuild/retest until SAP clean
+10. Consolidate final delivery CSVs if needed
+11. Send final emails
+
+Email/delivery knowledge from meeting
+- Can send one file or multiple files in one email.
+- To LUCY:
+  body does not really matter
+  subject must contain something (non-empty)
+  attachments are the key
+- Final consolidation can likely be:
+  one FMS USD
+  one FMS CAD
+  one AFS USD
+  one AFS CAD
+  when applicable
+- Need to avoid mixing currencies in the same final file.
+
+Rejected tickets
+- Rejection flow in HDA was NOT covered enough in the latest meeting.
+- Still pending.
+- reject_ticket in src/hda_web/client.py is still just a stub/logger.
+
+Process 2 status
+- Not urgent yet.
+- Will likely depend on reading confirmation/response emails.
+- Still undefined compared with Process 1.
+
+What another chat should do next
+1. Read this file and README.md
+2. Check current __main__ in src/sap/client.py
+3. Continue implementing SAP result parsing:
+   - read all result rows, not just samples
+   - group by XBLNR
+   - classify success vs error messages
+4. Add allowed-combination validation from AFS/FMS tables before SAP
+5. Integrate SAP validation loop into Process 1
+6. Leave HDA rejection for after SAP parsing is stable
+
+Suggested immediate next implementation steps
+- Add a formal allowed-combinations table in code for AFS/FMS.
+- Validate generated records against that table before SAP.
+- Extend SAP result inspection to fetch all rows.
+- Build a result model like:
+  { xblnr, vendor, account, prctr, kostl, messages[], has_error }
+- Map XBLNR back to CSV row and HDA ticket.
+- Remove failing rows from candidate CSV and re-run SAP test.
+
+Notes
+- Do not trust README alone; this file is more current.
+- Some credentials are in config/.env.local. Do not expose them in outputs or commits.

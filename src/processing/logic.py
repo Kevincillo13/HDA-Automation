@@ -39,6 +39,26 @@ CAN_POSTAL_PREFIX_TO_PROVINCE = {
     "Y": "YT",
 }
 
+FMS_ALLOWED_COMBINATIONS = {
+    ("1000", "900010", "USD"),
+    ("2000", "900010", "CAD"),
+    ("E100", "900000", "USD"),
+}
+
+AFS_EXPLICIT_ALLOWED_COMBINATIONS = {
+    ("0032", "8000001", "USD"),
+    ("0016", "8000001", "CAD"),
+    ("1010", "8000001", "USD"),
+    ("0060", "8000001", "CAD"),
+    ("0060", "8000001", "USD"),
+    ("0182", "8000001", "USD"),
+    ("0124", "8000001", "USD"),
+    ("0133", "8000001", "USD"),
+    ("0224", "8000001", "USD"),
+}
+
+AFS_NOT_APPLICABLE_COMPANY_CODES = {"5500", "5700"}
+
 
 def clean_text(value: str) -> str:
     """Collapses whitespace and normalizes empty-like values."""
@@ -160,6 +180,37 @@ def normalize_date(value: str) -> str:
     return raw_value
 
 
+def _is_parseable_date(value: str) -> bool:
+    if not value or value == "Empty":
+        return False
+
+    raw_value = str(value).split(" ")[0].strip()
+    formats = [
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+        "%Y-%m-%d",
+        "%d-%m-%Y",
+        "%m-%d-%Y",
+    ]
+    for fmt in formats:
+        try:
+            datetime.strptime(raw_value, fmt)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _is_future_normalized_date(value: str) -> bool:
+    if not value or value == "Empty":
+        return False
+    try:
+        parsed = datetime.strptime(value, "%m/%d/%Y").date()
+    except ValueError:
+        return False
+    return parsed > datetime.now().date()
+
+
 def normalize_numeric_code(value: str, width: int = 10) -> str:
     """Removes separators and pads numeric codes to a fixed width."""
     if not value or value == "Empty":
@@ -181,6 +232,56 @@ def classify_mail_group(company_code: str) -> str:
     if normalized.startswith("E"):
         return "AFS"
     return "AFS"
+
+
+def is_allowed_one_time_combination(
+    company_code: str,
+    vendor_num: str,
+    currency: str,
+) -> tuple[bool, str]:
+    normalized_company = str(company_code or "").strip().upper()
+    normalized_vendor = str(vendor_num or "").strip().upper()
+    normalized_currency = str(currency or "").strip().upper()
+    mail_group = classify_mail_group(normalized_company)
+
+    if not normalized_company:
+        return False, "Company code is missing."
+    if not normalized_vendor:
+        return False, "Vendor number is missing."
+    if not normalized_currency:
+        return False, "Currency is missing."
+
+    if mail_group == "FMS":
+        if (normalized_company, normalized_vendor, normalized_currency) in FMS_ALLOWED_COMBINATIONS:
+            return True, ""
+        return (
+            False,
+            f"Combination CompanyCode/Vendor/Currency is not allowed for FMS: "
+            f"{normalized_company}/{normalized_vendor}/{normalized_currency}.",
+        )
+
+    if normalized_company in AFS_NOT_APPLICABLE_COMPANY_CODES:
+        return (
+            False,
+            f"Company code {normalized_company} is marked as not applicable for OneTime Check.",
+        )
+
+    if (normalized_company, normalized_vendor, normalized_currency) in AFS_EXPLICIT_ALLOWED_COMBINATIONS:
+        return True, ""
+
+    if (
+        normalized_company.startswith("E")
+        and normalized_company != "E100"
+        and normalized_vendor == "8000001"
+        and normalized_currency == "USD"
+    ):
+        return True, ""
+
+    return (
+        False,
+        f"Combination CompanyCode/Vendor/Currency is not allowed for AFS: "
+        f"{normalized_company}/{normalized_vendor}/{normalized_currency}.",
+    )
 
 def apply_business_rules(raw_data: dict) -> dict:
     """Applies business logic to transform raw extracted data into a structured format for the CSV."""
@@ -258,9 +359,25 @@ def validate_ticket_data(processed_data: dict) -> list[str]:
     if processed_data.get("Amount", 0.0) == 0.0:
         errors.append("Amount is zero.")
 
+    combo_ok, combo_error = is_allowed_one_time_combination(
+        processed_data.get("CompanyCode", ""),
+        processed_data.get("VendorNum", ""),
+        processed_data.get("Currency", ""),
+    )
+    if not combo_ok and combo_error:
+        errors.append(combo_error)
+
     # Rule: Zip code should not be empty
     if not processed_data.get("Zip") or processed_data.get("Zip") == "Empty":
         errors.append("Zip code is missing.")
+
+    invoice_date = processed_data.get("InvoiceDate", "Empty")
+    if not invoice_date or invoice_date == "Empty":
+        errors.append("Invoice Date is missing.")
+    elif not _is_parseable_date(invoice_date):
+        errors.append(f"Invoice Date '{invoice_date}' is invalid.")
+    elif _is_future_normalized_date(invoice_date):
+        errors.append(f"Invoice Date '{invoice_date}' cannot be in the future.")
 
     # Rule: Cost Center cleaning and validation
     raw_cc = str(processed_data.get("CostCenter", "")).strip()
