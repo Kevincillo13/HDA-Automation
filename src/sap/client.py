@@ -128,7 +128,7 @@ class SAPGuiClient:
         self.application = None
 
     def open_tcode(self, tcode: str) -> None:
-        """Open a transaction code, preferring SAP native transaction navigation."""
+        """Opens a transaction code, preferring SAP native transaction navigation."""
         session = self.get_session()
         normalized_tcode = tcode.strip()
         if not normalized_tcode:
