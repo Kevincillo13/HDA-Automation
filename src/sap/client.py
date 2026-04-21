@@ -122,13 +122,21 @@ class SAPGuiClient:
         return system_group, tcode
 
     def close(self) -> None:
-        """Release SAP references kept by the client."""
+        """Release SAP references and attempt to close the connection."""
+        try:
+            if self.connection:
+                self.logger.info("Closing SAP connection.")
+                # Attempt to close the connection to release SAP GUI windows
+                self.connection.CloseConnection()
+        except Exception as exc:
+            self.logger.warning("Failed to close SAP connection: %s", exc)
+        
         self.session = None
         self.connection = None
         self.application = None
 
     def open_tcode(self, tcode: str) -> None:
-        """Opens a transaction code, preferring SAP native transaction navigation."""
+        """Open a transaction code, preferring SAP native transaction navigation."""
         session = self.get_session()
         normalized_tcode = tcode.strip()
         if not normalized_tcode:
@@ -454,10 +462,12 @@ class SAPGuiClient:
         separator: str = ",",
         test_mode: bool = True,
         max_iterations: int = 10,
+        retry_suffix: str | None = None,
     ) -> dict[str, Any]:
         """Run SAP validation in a loop until all remaining rows are valid or the process gets blocked."""
         current_csv_path = str(Path(csv_path).resolve())
         iteration_history: list[dict[str, Any]] = []
+        all_rejected_invoices: set[str] = set()
         system_group = self.infer_system_group_from_csv_path(current_csv_path)
         tcode = self._resolve_tcode(system_group)
 
@@ -512,14 +522,27 @@ class SAPGuiClient:
                     "final_csv_path": current_csv_path,
                     "iterations": iteration_history,
                     "last_validation_payload": validation_payload,
+                    "all_rejected_invoices": sorted(list(all_rejected_invoices)),
                 }
 
-            rejected_invoices = decision_summary.get("rejected_invoices", [])
-            if rejected_invoices:
+            # Collect all invoices that need to be removed to proceed
+            blocking_invoices = (
+                decision_summary.get("rejected_invoices", []) +
+                decision_summary.get("fix_local_data_invoices", []) +
+                decision_summary.get("fix_csv_format_invoices", []) +
+                decision_summary.get("manual_review_invoices", [])
+            )
+            
+            # Filter empty values and deduplicate
+            unique_blocking = sorted(list(set(str(inv).strip() for inv in blocking_invoices if inv and str(inv).strip())))
+
+            if unique_blocking:
+                all_rejected_invoices.update(unique_blocking)
                 next_csv_path = self._build_retry_csv_without_invoices(
                     current_csv_path,
-                    rejected_invoices,
+                    unique_blocking,
                     iteration,
+                    retry_suffix=retry_suffix,
                 )
                 if next_csv_path == current_csv_path:
                     self.logger.warning(
@@ -531,22 +554,21 @@ class SAPGuiClient:
                         "final_csv_path": current_csv_path,
                         "iterations": iteration_history,
                         "last_validation_payload": validation_payload,
+                        "all_rejected_invoices": sorted(list(all_rejected_invoices)),
                     }
                 current_csv_path = next_csv_path
                 continue
 
             self.logger.warning(
-                "SAP validation cycle blocked by non-auto-resolvable issues | fix_local=%s | fix_csv=%s | manual_review=%s",
-                decision_summary.get("fix_local_data_invoices", []),
-                decision_summary.get("fix_csv_format_invoices", []),
-                decision_summary.get("manual_review_invoices", []),
+                "SAP validation cycle blocked by non-auto-resolvable issues with no identifiable invoices."
             )
             return {
                 "status": "blocked",
-                "reason": "non_auto_resolvable_errors",
+                "reason": "non_auto_resolvable_errors_no_invoices",
                 "final_csv_path": current_csv_path,
                 "iterations": iteration_history,
                 "last_validation_payload": validation_payload,
+                "all_rejected_invoices": sorted(list(all_rejected_invoices)),
             }
 
         self.logger.warning(
@@ -558,6 +580,7 @@ class SAPGuiClient:
             "status": "max_iterations_reached",
             "final_csv_path": current_csv_path,
             "iterations": iteration_history,
+            "all_rejected_invoices": sorted(list(all_rejected_invoices)),
         }
 
     def get_session(self) -> Any:
@@ -871,6 +894,7 @@ class SAPGuiClient:
         csv_path: str,
         rejected_invoices: list[str],
         iteration: int,
+        retry_suffix: str | None = None,
     ) -> str:
         rejected_invoice_set = {
             str(invoice).strip() for invoice in rejected_invoices if str(invoice).strip()
@@ -882,6 +906,14 @@ class SAPGuiClient:
             if str(row.get("Invoice Number", "")).strip() not in rejected_invoice_set
         ]
 
+        if not kept_rows:
+            self.logger.warning(
+                "SAP retry CSV generation would result in 0 rows. Skipping file creation | csv=%s",
+                csv_path
+            )
+            # Devolvemos la ruta original; el loop detectará que no hay cambios y se detendrá
+            return str(Path(csv_path).resolve())
+
         if len(kept_rows) == len(rows):
             self.logger.warning(
                 "SAP retry CSV generation removed 0 rows | csv=%s | rejected_invoices=%s",
@@ -891,9 +923,11 @@ class SAPGuiClient:
             return str(Path(csv_path).resolve())
 
         source_path = Path(csv_path).resolve()
-        next_csv_path = source_path.with_name(
-            f"sapr{iteration:02d}{source_path.suffix}"
-        )
+        
+        # Build unique filename using suffix if provided
+        base_name = retry_suffix if retry_suffix else "sapr"
+        temp_name = f"{base_name}_retry_{iteration:02d}{source_path.suffix}"
+        next_csv_path = source_path.with_name(temp_name)
         self._write_csv_rows(next_csv_path, fieldnames, kept_rows)
         self.logger.info(
             "SAP retry CSV generated | source=%s | target=%s | removed_invoices=%s | kept_rows=%s",

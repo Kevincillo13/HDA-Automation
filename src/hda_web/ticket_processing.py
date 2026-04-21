@@ -1,5 +1,6 @@
 import traceback
 import time
+from collections import defaultdict
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -14,6 +15,7 @@ from src.hda_web.client import HDAClient
 from src.hda_web.ticket_parser import extract_ticket_data
 from src.mailer.client import SMTPMailClient
 from src.processing.logic import apply_business_rules, validate_ticket_data
+from src.sap.client import SAPGuiClient
 
 
 def _write_human_summary(
@@ -26,6 +28,7 @@ def _write_human_summary(
     invalid_results: list[dict[str, Any]],
     generated_csvs: list[str],
 ) -> str:
+    """Writes a human-readable summary of the process results after all stages (HDA + SAP)."""
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     summary_timestamp = started_at.strftime("%Y%m%d_%H%M%S")
@@ -33,18 +36,20 @@ def _write_human_summary(
 
     lines: list[str] = []
     lines.append("Daily Process Log Summary")
+    lines.append("=" * 30)
     lines.append(f"Run ID: {run_id}")
     lines.append(f"Started: {started_at.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"Finished: {ended_at.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"Duration: {ended_at - started_at}")
     lines.append("")
-    lines.append(
-        f"The automation started at {started_at.strftime('%H:%M:%S')} and found "
-        f"{len(one_time_checks)} 'OneTime Check' tickets."
-    )
+    lines.append(f"1. Total OneTime Check detected in HDA Grid: {len(one_time_checks)}")
+    lines.append(f"2. Passed HDA Local Validation: {len(valid_results) + len([r for r in invalid_results if 'Rejected by SAP' in str(r.get('errors', []))])}")
+    lines.append(f"3. Passed SAP Final Validation: {len(valid_results)}")
+    lines.append("")
+    lines.append(f"FINAL RESULT: {len(valid_results)} tickets ready to pay, {len(invalid_results)} tickets rejected.")
     lines.append("")
 
-    lines.append("OneTime Check tickets found:")
+    lines.append("--- ONE-TIME CHECK TICKETS DETECTED ---")
     if one_time_checks:
         for index, ticket in enumerate(one_time_checks, start=1):
             lines.append(
@@ -55,76 +60,43 @@ def _write_human_summary(
         lines.append("None")
     lines.append("")
 
-    lines.append("Valid tickets:")
+    lines.append("--- FINAL VALID TICKETS (Passed SAP Validation) ---")
     if valid_results:
         for result in valid_results:
             ticket = result["ticket"]
-            raw_data = result["raw_data"]
-            processed_data = result["processed_data"]
-            lines.append(
-                f"- {ticket.ticket_id} | subject={ticket.subject} | company={ticket.company}"
-            )
-            lines.append(
-                "  Raw: "
-                f"Amount={raw_data.get('Amount')} | Invoice Number={raw_data.get('Invoice Number')} | "
-                f"Invoice Date={raw_data.get('Invoice Date')} | Currency={raw_data.get('Currency')} | "
-                f"Cost/Profit center={raw_data.get('Cost/Profit center')} | GL Account={raw_data.get('GL Account')}"
-            )
-            lines.append(
-                "  Processed: "
-                f"CompanyCode={processed_data.get('CompanyCode')} | VendorNum={processed_data.get('VendorNum')} | "
-                f"InvoiceNum={processed_data.get('InvoiceNum')} | InvoiceDate={processed_data.get('InvoiceDate')} | "
-                f"Amount={processed_data.get('Amount')} | Currency={processed_data.get('Currency')} | "
-                f"CostCenter={processed_data.get('CostCenter')} | GLAccount={processed_data.get('GLAccount')} | "
-                f"City={processed_data.get('City')} | State={processed_data.get('State')} | "
-                f"Zip={processed_data.get('Zip')} | Country={processed_data.get('Country')}"
-            )
+            proc = result["processed_data"]
+            lines.append(f"- {ticket.ticket_id} | subject={ticket.subject} | company={ticket.company}")
+            lines.append(f"  Amount: {proc.get('Amount')} {proc.get('Currency')} | Invoice: {proc.get('InvoiceNum')}")
             lines.append("")
     else:
         lines.append("None")
         lines.append("")
 
-    lines.append("Invalid tickets:")
+    lines.append("--- INVALID OR REJECTED TICKETS (Local or SAP) ---")
     if invalid_results:
         for result in invalid_results:
             ticket = result["ticket"]
-            raw_data = result.get("raw_data", {})
-            processed_data = result.get("processed_data", {})
             errors = result.get("errors", [])
-            lines.append(
-                f"- {ticket.ticket_id} | subject={ticket.subject} | company={ticket.company}"
-            )
-            if raw_data:
-                lines.append(
-                    "  Raw: "
-                    f"Amount={raw_data.get('Amount')} | Invoice Number={raw_data.get('Invoice Number')} | "
-                    f"Invoice Date={raw_data.get('Invoice Date')} | Currency={raw_data.get('Currency')} | "
-                    f"Cost/Profit center={raw_data.get('Cost/Profit center')} | GL Account={raw_data.get('GL Account')}"
-                )
-            if processed_data:
-                lines.append(
-                    "  Processed: "
-                    f"CompanyCode={processed_data.get('CompanyCode')} | VendorNum={processed_data.get('VendorNum')} | "
-                    f"InvoiceNum={processed_data.get('InvoiceNum')} | InvoiceDate={processed_data.get('InvoiceDate')} | "
-                    f"Amount={processed_data.get('Amount')} | Currency={processed_data.get('Currency')} | "
-                    f"CostCenter={processed_data.get('CostCenter')} | GLAccount={processed_data.get('GLAccount')} | "
-                    f"City={processed_data.get('City')} | State={processed_data.get('State')} | "
-                    f"Zip={processed_data.get('Zip')} | Country={processed_data.get('Country')}"
-                )
-            lines.append("  Errors:")
+            lines.append(f"- {ticket.ticket_id} | subject={ticket.subject} | company={ticket.company}")
+            lines.append("  Reasons for rejection:")
             for error in errors:
-                lines.append(f"  - {error}")
+                lines.append(f"    * {error}")
             lines.append("")
     else:
         lines.append("None")
         lines.append("")
 
-    lines.append("Generated CSV files:")
+    lines.append("--- GENERATED FINAL CSV FILES ---")
     if generated_csvs:
         for csv_path in generated_csvs:
-            lines.append(f"- {csv_path}")
+            lines.append(f"- {Path(csv_path).name}")
     else:
         lines.append("None")
+
+    with open(summary_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    return str(summary_path)
     lines.append("")
 
     summary_path.write_text("\n".join(lines), encoding="utf-8")
@@ -594,24 +566,95 @@ def process_all_tickets() -> None:
             logger.info("--- VALID TICKETS COLLECTED ---")
             for valid_ticket in valid_tickets:
                 logger.info(valid_ticket["processed_data"])
-            generated_csvs = builder.build(
+            
+            # 1. Generación inicial de CSVs (fragmentados por Vendor)
+            candidate_csvs = builder.build(
                 [valid_ticket["processed_data"] for valid_ticket in valid_tickets],
                 file_suffix=run_id,
             )
-            logger.info("CSV files generated: %s", len(generated_csvs))
-            for csv_path in generated_csvs:
-                logger.info("Generated CSV: %s", csv_path)
-        else:
-            logger.info("No valid tickets collected, so no CSV files were generated.")
+            logger.info("Candidate CSV files generated: %s", len(candidate_csvs))
 
+            # 2. Validación SAP
+            current_stage = "SAP validation"
+            final_valid_csvs_by_group = defaultdict(list)
+            sap_rejected_invoices = set()
+
+            for csv_path in candidate_csvs:
+                logger.info("--- Starting SAP Validation for: %s ---", Path(csv_path).name)
+                
+                # Identificar grupo y vendor desde el nombre del archivo original
+                mail_group = _get_mail_group_from_csv_path(csv_path) or "GRP"
+                parts = Path(csv_path).name.split("_")
+                vendor = "UNK"
+                currency = "UNK"
+                if len(parts) >= 4:
+                    vendor = parts[2]
+                    currency = parts[3]
+
+                sap_client = SAPGuiClient(settings)
+                try:
+                    # Sufijo corto para evitar errores de longitud en SAP
+                    unique_suffix = f"{mail_group}_{vendor}"
+                    sap_result = sap_client.validate_csv_until_clean(csv_path, retry_suffix=unique_suffix)
+                    
+                    # Recolectar rechazos siempre
+                    sap_rejected_invoices.update(sap_result.get("all_rejected_invoices", []))
+
+                    if sap_result["status"] == "clean":
+                        clean_path = Path(sap_result["final_csv_path"])
+                        # VALIDACIÓN CRÍTICA: ¿Tiene datos el archivo limpio?
+                        _, rows = sap_client._read_csv_rows(str(clean_path))
+                        if rows:
+                            final_valid_csvs_by_group[(mail_group, currency)].append(str(clean_path))
+                            logger.info("Clean CSV with %s rows added to final pool.", len(rows))
+                        else:
+                            logger.warning("Clean CSV for vendor %s is empty, skipping.", vendor)
+                except Exception as sap_exc:
+                    logger.error("Technical error during SAP validation for %s: %s", vendor, sap_exc)
+                finally:
+                    sap_client.close()
+
+            # 3. Mover tickets rechazados por SAP a la lista de inválidos para el reporte
+            if sap_rejected_invoices:
+                logger.info("SAP rejected %s invoices. Updating counts.", len(sap_rejected_invoices))
+                still_valid = []
+                for entry in valid_tickets:
+                    inv = str(entry["processed_data"].get("InvoiceNum", "")).strip()
+                    if inv in sap_rejected_invoices:
+                        entry["errors"] = entry.get("errors", []) + ["Rejected by SAP validation"]
+                        invalid_tickets.append(entry)
+                    else:
+                        still_valid.append(entry)
+                valid_tickets = still_valid
+
+            # 4. Consolidación Final (Solo si hay datos)
+            current_stage = "final consolidation"
+            generated_csvs = []
+            
+            for (group, curr), paths in final_valid_csvs_by_group.items():
+                if not paths:
+                    continue
+                
+                # Nombre de archivo final según requerimiento: AP15_GROUP_FINAL_YYMMDD
+                date_str = started_at.strftime("%y%m%d")
+                consolidated_name = f"AP15_{group}_FINAL_{date_str}_{curr}"
+                
+                consolidated_path = builder.merge_csvs(paths, consolidated_name)
+                generated_csvs.append(consolidated_path)
+                logger.info("FINAL Consolidated CSV generated: %s", consolidated_path)
+
+        else:
+            logger.info("No valid tickets passed HDA validation.")
+
+        # 5. Generar reporte con terminología clara
         summary_path = _write_human_summary(
             str(run_output_dir),
             run_id,
             started_at,
             datetime.now(),
-            one_time_checks,
-            valid_tickets,
-            invalid_tickets,
+            one_time_checks, # Estos son todos los encontrados
+            valid_tickets,    # Estos son los que pasaron SAP
+            invalid_tickets,  # Estos incluyen rechazos HDA y rechazos SAP
             generated_csvs,
         )
         logger.info("Human-readable summary generated: %s", summary_path)

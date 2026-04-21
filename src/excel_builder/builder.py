@@ -80,7 +80,8 @@ class AP15Builder:
             worksheet[f"F{index}"] = "DR"
             if amount != "":
                 worksheet[f"G{index}"] = float(amount)
-                worksheet[f"G{index}"].number_format = "#,##0.00"
+                # Use a clean format without thousands separator for SAP compatibility
+                worksheet[f"G{index}"].number_format = "0.00"
             else:
                 worksheet[f"G{index}"] = ""
             worksheet[f"H{index}"] = currency
@@ -219,3 +220,77 @@ class AP15Builder:
             return ""
         cleaned = str(value).strip()
         return "" if cleaned == "Empty" else cleaned
+
+    def parse_amount(self, value: Any) -> tuple[float, list[str]]:
+        """Tries to parse amount safely. Returns (value, errors)."""
+        raw_val = self._clean(value).replace("$", "").replace(" ", "")
+        if not raw_val:
+            return 0.0, ["Amount is missing."]
+        
+        # Check for multiple decimal-like separators or strange chars
+        if raw_val.count(".") > 1 and raw_val.count(",") > 1:
+             return 0.0, [f"Ambiguous amount format (multiple separators): '{raw_val}'"]
+
+        normalized = raw_val
+        # Case: 1,000.00 (Standard US)
+        if "," in normalized and "." in normalized:
+            if normalized.rfind(".") > normalized.rfind(","):
+                normalized = normalized.replace(",", "")
+            else:
+                # Case: 1.000,00 (European/Latam)
+                # In USD/CAD context, this is risky. Let's handle it but could be rejected if preferred.
+                normalized = normalized.replace(".", "").replace(",", ".")
+        
+        # Case: 4.000 (Could be 4 or 4000)
+        elif "." in normalized and normalized.count(".") == 1:
+            parts = normalized.split(".")
+            if len(parts[-1]) != 2 and len(parts[-1]) != 3:
+                # Ambiguous if not .XX or .XXX
+                pass 
+        
+        # Case: 4,000 or 4,50
+        elif "," in normalized and normalized.count(",") == 1:
+            parts = normalized.split(",")
+            if len(parts[-1]) == 3:
+                # Likely thousands
+                normalized = normalized.replace(",", "")
+            elif len(parts[-1]) in [1, 2]:
+                # Likely decimal
+                normalized = normalized.replace(",", ".")
+
+        try:
+            val = float(normalized)
+            return val, []
+        except ValueError:
+            return 0.0, [f"Invalid amount format: '{raw_val}'"]
+
+    def merge_csvs(self, csv_paths: list[str], output_name: str) -> str:
+        """Merges multiple AP15 CSV files into a single one, keeping only the first header."""
+        if not csv_paths:
+            raise ValueError("No CSV paths provided for merging.")
+
+        output_path = self.output_dir / f"{output_name}.csv"
+        header_written = False
+
+        with output_path.open("w", encoding="utf-8-sig", newline="") as outfile:
+            writer = csv.writer(outfile, lineterminator="\r\n")
+            for path_str in csv_paths:
+                path = Path(path_str)
+                if not path.exists():
+                    continue
+                
+                with path.open("r", encoding="utf-8-sig", newline="") as infile:
+                    reader = csv.reader(infile)
+                    try:
+                        header = next(reader)
+                        if not header_written:
+                            writer.writerow(header)
+                            header_written = True
+                        
+                        for row in reader:
+                            if any(cell.strip() for cell in row):
+                                writer.writerow(row)
+                    except StopIteration:
+                        continue
+
+        return str(output_path)

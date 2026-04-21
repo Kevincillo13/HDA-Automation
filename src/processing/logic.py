@@ -68,6 +68,55 @@ def clean_text(value: str) -> str:
     return cleaned if cleaned else "Empty"
 
 
+def parse_amount(value: str) -> tuple[float, list[str]]:
+    """Tries to parse amount safely. Returns (value, errors)."""
+    raw_val = clean_text(value).replace("$", "").replace(" ", "")
+    if not raw_val or raw_val == "Empty":
+        return 0.0, ["Amount is missing."]
+    
+    # Check for multiple decimal-like separators or strange chars
+    if raw_val.count(".") > 1 and raw_val.count(",") > 1:
+            return 0.0, [f"Ambiguous amount format (multiple separators): '{raw_val}'"]
+
+    normalized = raw_val
+    # Case: 1,000.00 (Standard US)
+    if "," in normalized and "." in normalized:
+        if normalized.rfind(".") > normalized.rfind(","):
+            normalized = normalized.replace(",", "")
+        else:
+            # Case: 1.000,00 (European/Latam)
+            # In USD/CAD context, this is risky.
+            normalized = normalized.replace(".", "").replace(",", ".")
+    
+    # Case: 4,000 or 4,50
+    elif "," in normalized and normalized.count(",") == 1:
+        parts = normalized.split(",")
+        if len(parts[-1]) == 3:
+            # Likely thousands
+            normalized = normalized.replace(",", "")
+        elif len(parts[-1]) in [1, 2]:
+            # Likely decimal
+            normalized = normalized.replace(",", ".")
+    
+    # Case: 4.000 (Could be 4 or 4000)
+    elif "." in normalized and normalized.count(".") == 1:
+        parts = normalized.split(".")
+        if len(parts[-1]) == 3:
+            # If it's something like 4.000, it's ambiguous. Is it 4 or 4000?
+            # Standard USD/CAD uses . as decimal. So 4.000 is 4.
+            # But users might use . as thousands.
+            # Let's be conservative. If it's exactly 3 digits after the dot, 
+            # and no other separators, we mark as ambiguous if we want to be 100% sure.
+            # However, standard float(4.000) is 4.0.
+            pass
+
+    try:
+        val = float(normalized)
+        return val, []
+    except ValueError:
+        return 0.0, [f"Invalid amount format: '{raw_val}'"]
+
+
 def _infer_canadian_province(zip_code: str) -> str:
     """Infers province from postal-code prefix when it is uniquely mappable."""
     if not zip_code or zip_code == "Empty":
@@ -311,11 +360,8 @@ def apply_business_rules(raw_data: dict) -> dict:
         inv_date = normalize_date(inv_date)
 
     # Rule: Clean and convert Amount
-    amt_str = str(raw_data.get("Amount", "0")).replace(",", "").replace("$", "").strip()
-    try:
-        amount_val = float(amt_str)
-    except (ValueError, TypeError):
-        amount_val = 0.0
+    amount_val, amount_errors = parse_amount(raw_data.get("Amount", "0"))
+
 
     # Rule: Clean and parse address components
     address, city_state, payable_to = normalize_address_fields(
@@ -348,6 +394,7 @@ def apply_business_rules(raw_data: dict) -> dict:
         "BrandCode": raw_data.get("Brand code", "Empty"),
         # Keep raw GL for validation purposes
         "_raw_gl": raw_data.get("GL Account", "Empty"),
+        "_amount_errors": amount_errors,
     }
     return processed_row
 
@@ -355,8 +402,11 @@ def validate_ticket_data(processed_data: dict) -> list[str]:
     """Validates the processed ticket data based on the original app's highlighting logic."""
     errors = []
 
-    # Rule: Amount should not be zero
-    if processed_data.get("Amount", 0.0) == 0.0:
+    # Rule: Amount validation
+    amount_errors = processed_data.get("_amount_errors", [])
+    if amount_errors:
+        errors.extend(amount_errors)
+    elif processed_data.get("Amount", 0.0) == 0.0:
         errors.append("Amount is zero.")
 
     combo_ok, combo_error = is_allowed_one_time_combination(
