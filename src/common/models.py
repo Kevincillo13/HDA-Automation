@@ -10,6 +10,7 @@ class TicketRecord:
     subject: str = ""
     company: str = ""
     ticket_type: str = ""
+    hda_status: str = ""
     pdf_path: str = ""
     excel_path: str = ""
     validation_errors: List[str] = field(default_factory=list)

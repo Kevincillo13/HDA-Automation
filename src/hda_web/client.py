@@ -194,20 +194,23 @@ class HDAClient:
             self._log_grid_debug()
         for index, record in enumerate(ticket_records, start=1):
             self.logger.info(
-                "Grid row %s | ticket_id=%s | created=%s | payment_method=%s | company=%s | type=%s | subject=%s",
+                "Grid row %s | ticket_id=%s | created=%s | payment_method=%s | company=%s | type=%s | status=%s | subject=%s",
                 index,
                 record.ticket_id,
                 record.created,
                 record.payment_method,
                 record.company,
                 record.ticket_type,
+                record.hda_status,
                 record.subject,
             )
 
         otc_records = [
-            ticket for ticket in ticket_records if ticket.payment_method.strip() == "OneTime Check"
+            ticket for ticket in ticket_records 
+            if ticket.payment_method.strip() == "OneTime Check"
+            and ticket.hda_status.strip() in ["Open", "Assigned"]
         ]
-        self.logger.info("OneTime Check tickets visible: %s", len(otc_records))
+        self.logger.info("OneTime Check candidates visible: %s", len(otc_records))
         for ticket in otc_records:
             self.logger.info(
                 "OneTime Check candidate | ticket_id=%s | company=%s | subject=%s",
@@ -538,6 +541,7 @@ class HDAClient:
                 subject: readText(row, "td[data-columnid$='_c27_8'] .text-default"),
                 company: readText(row, "td[data-columnid$='_c9_5'] .list-cell span"),
                 ticket_type: readText(row, "td[data-columnid$='_c39_7'] .text-caption"),
+                hda_status: readText(row, "td[data-columnid$='_c36_3'] .label-text"),
                 displayed: !!(row.offsetWidth || row.offsetHeight || row.getClientRects().length),
                 text_preview: (row.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 300),
             }));
@@ -558,6 +562,7 @@ class HDAClient:
                     subject=str(row.get("subject", "")).strip(),
                     company=str(row.get("company", "")).strip(),
                     ticket_type=str(row.get("ticket_type", "")).strip(),
+                    hda_status=str(row.get("hda_status", "")).strip(),
                 )
             )
         self.logger.info(

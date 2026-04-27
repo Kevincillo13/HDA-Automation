@@ -397,8 +397,13 @@ def _collect_one_time_checks_with_retry(
 
         tickets = client.read_payment_grid_rows()
         last_tickets = tickets
+        # MODIFICAR AQUI PARA TESTEO: Agrega o quita "Assigned" de esta lista según necesites probar
+        ALLOWED_HDA_STATUSES = ["Open", "Assigned"]
+        
         one_time_checks = [
-            ticket for ticket in tickets if ticket.payment_method.strip() == "OneTime Check"
+            ticket for ticket in tickets 
+            if ticket.payment_method.strip() == "OneTime Check" 
+            and ticket.hda_status.strip() in ALLOWED_HDA_STATUSES
         ]
 
         empty_payment_method = len(
