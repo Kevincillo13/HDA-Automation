@@ -45,7 +45,7 @@ Hoy el proyecto ya hace esto para el Proceso 1:
 Pendiente principal:
 
 - validacion SAP del/los CSV(s) antes del envio final
-- rechazo de tickets invalidos en HDA
+- suspension de tickets invalidos en HDA
 - integrar la validacion SAP con la depuracion de filas y regeneracion de CSV
 - implementacion del Proceso 2
 
@@ -77,7 +77,7 @@ python -m src.sap.client
 4. Seleccion de tickets `OneTime Check`.
 5. Apertura y parseo ticket por ticket.
 6. Aplicacion de reglas de negocio y validacion local.
-7. Separacion de tickets validos e invalidos.
+7. Separacion de tickets validos e invalidos (suspendidos).
 8. Generacion de `log_summary`.
 9. Generacion de CSVs AP15.
 10. Envio de correos del summary y de los CSVs por grupo.

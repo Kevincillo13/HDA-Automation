@@ -1,1 +1,1 @@
-"""Business validations and rejection rules."""
+"""Business validations and suspension rules."""

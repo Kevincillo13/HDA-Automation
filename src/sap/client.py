@@ -22,16 +22,16 @@ class SAPGuiClient:
 
     CATEGORY_ACTIONS = {
         "success": "accept",
-        "company_code_invalid": "reject_row",
-        "one_time_vendor_invalid": "reject_row",
-        "vendor_invalid": "reject_row",
-        "cost_center_invalid": "reject_row",
-        "profit_center_invalid": "reject_row",
-        "profit_center_missing": "reject_row",
-        "gl_account_invalid": "reject_row",
-        "duplicate_document": "reject_row",
-        "invoice_date_invalid": "reject_row",
-        "invoice_date_in_future": "reject_row",
+        "company_code_invalid": "suspend_row",
+        "one_time_vendor_invalid": "suspend_row",
+        "vendor_invalid": "suspend_row",
+        "cost_center_invalid": "suspend_row",
+        "profit_center_invalid": "suspend_row",
+        "profit_center_missing": "suspend_row",
+        "gl_account_invalid": "suspend_row",
+        "duplicate_document": "suspend_row",
+        "invoice_date_invalid": "suspend_row",
+        "invoice_date_in_future": "suspend_row",
         "gl_account_missing": "fix_local_data",
         "amount_invalid": "fix_csv_format",
         "company_code_missing": "fix_local_data",
@@ -467,8 +467,8 @@ class SAPGuiClient:
         """Run SAP validation in a loop until all remaining rows are valid or the process gets blocked."""
         current_csv_path = str(Path(csv_path).resolve())
         iteration_history: list[dict[str, Any]] = []
-        all_rejected_invoices: set[str] = set()
-        rejection_reasons: dict[str, list[str]] = {}
+        all_suspended_invoices: set[str] = set()
+        suspension_reasons: dict[str, list[str]] = {}
         system_group = self.infer_system_group_from_csv_path(current_csv_path)
         tcode = self._resolve_tcode(system_group)
 
@@ -523,13 +523,13 @@ class SAPGuiClient:
                     "final_csv_path": current_csv_path,
                     "iterations": iteration_history,
                     "last_validation_payload": validation_payload,
-                    "all_rejected_invoices": sorted(list(all_rejected_invoices)),
-                    "rejection_reasons": rejection_reasons,
+                    "all_suspended_invoices": sorted(list(all_suspended_invoices)),
+                    "suspension_reasons": suspension_reasons,
                 }
 
             # Collect all invoices that need to be removed to proceed
             blocking_invoices = (
-                decision_summary.get("rejected_invoices", []) +
+                decision_summary.get("suspended_invoices", []) +
                 decision_summary.get("fix_local_data_invoices", []) +
                 decision_summary.get("fix_csv_format_invoices", []) +
                 decision_summary.get("manual_review_invoices", [])
@@ -539,15 +539,15 @@ class SAPGuiClient:
             unique_blocking = sorted(list(set(str(inv).strip() for inv in blocking_invoices if inv and str(inv).strip())))
 
             if unique_blocking:
-                all_rejected_invoices.update(unique_blocking)
+                all_suspended_invoices.update(unique_blocking)
                 
-                # Capturar motivos de rechazo para el reporte
+                # Capturar motivos de suspensión para el reporte
                 grouped = validation_results.get("grouped_by_invoice", {})
                 for inv in unique_blocking:
                     if inv in grouped:
                         msgs = grouped[inv].get("error_messages", [])
                         if msgs:
-                            rejection_reasons[inv] = msgs
+                            suspension_reasons[inv] = msgs
 
                 next_csv_path = self._build_retry_csv_without_invoices(
                     current_csv_path,
@@ -565,8 +565,8 @@ class SAPGuiClient:
                         "final_csv_path": current_csv_path,
                         "iterations": iteration_history,
                         "last_validation_payload": validation_payload,
-                        "all_rejected_invoices": sorted(list(all_rejected_invoices)),
-                        "rejection_reasons": rejection_reasons,
+                        "all_suspended_invoices": sorted(list(all_suspended_invoices)),
+                        "suspension_reasons": suspension_reasons,
                     }
                 current_csv_path = next_csv_path
                 continue
@@ -580,8 +580,8 @@ class SAPGuiClient:
                 "final_csv_path": current_csv_path,
                 "iterations": iteration_history,
                 "last_validation_payload": validation_payload,
-                "all_rejected_invoices": sorted(list(all_rejected_invoices)),
-                "rejection_reasons": rejection_reasons,
+                "all_suspended_invoices": sorted(list(all_suspended_invoices)),
+                "suspension_reasons": suspension_reasons,
             }
 
         self.logger.warning(
@@ -593,8 +593,8 @@ class SAPGuiClient:
             "status": "max_iterations_reached",
             "final_csv_path": current_csv_path,
             "iterations": iteration_history,
-            "all_rejected_invoices": sorted(list(all_rejected_invoices)),
-            "rejection_reasons": rejection_reasons,
+            "all_suspended_invoices": sorted(list(all_suspended_invoices)),
+            "suspension_reasons": suspension_reasons,
         }
 
     def get_session(self) -> Any:
@@ -843,7 +843,7 @@ class SAPGuiClient:
         row_count: int,
     ) -> dict[str, Any]:
         accepted_invoices: list[str] = []
-        rejected_invoices: list[str] = []
+        suspended_invoices: list[str] = []
         fix_local_data_invoices: list[str] = []
         fix_csv_format_invoices: list[str] = []
         manual_review_invoices: list[str] = []
@@ -851,7 +851,7 @@ class SAPGuiClient:
         if row_count == 0:
             decision_summary = {
                 "accepted_invoices": [],
-                "rejected_invoices": [],
+                "suspended_invoices": [],
                 "fix_local_data_invoices": [],
                 "fix_csv_format_invoices": ["<sap_empty_result_grid>"],
                 "manual_review_invoices": [],
@@ -859,9 +859,9 @@ class SAPGuiClient:
                 "result_state": "empty_result_grid",
             }
             self.logger.info(
-                "SAP validation decision summary | accepted=%s | rejected=%s | fix_local=%s | fix_csv=%s | manual_review=%s",
+                "SAP validation decision summary | accepted=%s | suspended=%s | fix_local=%s | fix_csv=%s | manual_review=%s",
                 decision_summary["accepted_invoices"],
-                decision_summary["rejected_invoices"],
+                decision_summary["suspended_invoices"],
                 decision_summary["fix_local_data_invoices"],
                 decision_summary["fix_csv_format_invoices"],
                 decision_summary["manual_review_invoices"],
@@ -872,8 +872,8 @@ class SAPGuiClient:
             action = str(summary.get("action", "manual_review"))
             if action == "accept":
                 accepted_invoices.append(invoice_number)
-            elif action == "reject_row":
-                rejected_invoices.append(invoice_number)
+            elif action == "suspend_row":
+                suspended_invoices.append(invoice_number)
             elif action == "fix_local_data":
                 fix_local_data_invoices.append(invoice_number)
             elif action == "fix_csv_format":
@@ -883,20 +883,20 @@ class SAPGuiClient:
 
         decision_summary = {
             "accepted_invoices": accepted_invoices,
-            "rejected_invoices": rejected_invoices,
+            "suspended_invoices": suspended_invoices,
             "fix_local_data_invoices": fix_local_data_invoices,
             "fix_csv_format_invoices": fix_csv_format_invoices,
             "manual_review_invoices": manual_review_invoices,
             "has_blocking_errors": bool(
-                rejected_invoices or fix_local_data_invoices or fix_csv_format_invoices or manual_review_invoices
+                suspended_invoices or fix_local_data_invoices or fix_csv_format_invoices or manual_review_invoices
             ),
             "result_state": "classified_rows",
         }
 
         self.logger.info(
-            "SAP validation decision summary | accepted=%s | rejected=%s | fix_local=%s | fix_csv=%s | manual_review=%s",
+            "SAP validation decision summary | accepted=%s | suspended=%s | fix_local=%s | fix_csv=%s | manual_review=%s",
             accepted_invoices,
-            rejected_invoices,
+            suspended_invoices,
             fix_local_data_invoices,
             fix_csv_format_invoices,
             manual_review_invoices,
@@ -906,18 +906,18 @@ class SAPGuiClient:
     def _build_retry_csv_without_invoices(
         self,
         csv_path: str,
-        rejected_invoices: list[str],
+        suspended_invoices: list[str],
         iteration: int,
         retry_suffix: str | None = None,
     ) -> str:
-        rejected_invoice_set = {
-            str(invoice).strip() for invoice in rejected_invoices if str(invoice).strip()
+        suspended_invoice_set = {
+            str(invoice).strip() for invoice in suspended_invoices if str(invoice).strip()
         }
         fieldnames, rows = self._read_csv_rows(csv_path)
         kept_rows = [
             row
             for row in rows
-            if str(row.get("Invoice Number", "")).strip() not in rejected_invoice_set
+            if str(row.get("Invoice Number", "")).strip() not in suspended_invoice_set
         ]
 
         if not kept_rows:
@@ -930,9 +930,9 @@ class SAPGuiClient:
 
         if len(kept_rows) == len(rows):
             self.logger.warning(
-                "SAP retry CSV generation removed 0 rows | csv=%s | rejected_invoices=%s",
+                "SAP retry CSV generation removed 0 rows | csv=%s | suspended_invoices=%s",
                 csv_path,
-                sorted(rejected_invoice_set),
+                sorted(suspended_invoice_set),
             )
             return str(Path(csv_path).resolve())
 
@@ -947,7 +947,7 @@ class SAPGuiClient:
             "SAP retry CSV generated | source=%s | target=%s | removed_invoices=%s | kept_rows=%s",
             source_path,
             next_csv_path,
-            sorted(rejected_invoice_set),
+            sorted(suspended_invoice_set),
             len(kept_rows),
         )
         return str(next_csv_path)

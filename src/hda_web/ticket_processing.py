@@ -44,10 +44,10 @@ def _write_human_summary(
     lines.append(f"Duration: {ended_at - started_at}")
     lines.append("")
     lines.append(f"1. Total OneTime Check detected in HDA Grid: {len(one_time_checks)}")
-    lines.append(f"2. Passed HDA Local Validation: {len(valid_results) + len([r for r in invalid_results if 'Rejected by SAP' in str(r.get('errors', []))])}")
+    lines.append(f"2. Passed HDA Local Validation: {len(valid_results) + len([r for r in invalid_results if 'Suspended by SAP' in str(r.get('errors', []))])}")
     lines.append(f"3. Passed SAP Final Validation: {len(valid_results)}")
     lines.append("")
-    lines.append(f"FINAL RESULT: {len(valid_results)} tickets ready to pay, {len(invalid_results)} tickets rejected.")
+    lines.append(f"FINAL RESULT: {len(valid_results)} tickets ready to pay, {len(invalid_results)} tickets suspended.")
     lines.append("")
 
     lines.append("--- ONE-TIME CHECK TICKETS DETECTED ---")
@@ -73,13 +73,13 @@ def _write_human_summary(
         lines.append("None")
         lines.append("")
 
-    lines.append("--- INVALID OR REJECTED TICKETS (Local or SAP) ---")
+    lines.append("--- INVALID OR SUSPENDED TICKETS (Local or SAP) ---")
     if invalid_results:
         for result in invalid_results:
             ticket = result["ticket"]
             errors = result.get("errors", [])
             lines.append(f"- {ticket.ticket_id} | subject={ticket.subject} | company={ticket.company}")
-            lines.append("  Reasons for rejection:")
+            lines.append("  Reasons for suspension:")
             for error in errors:
                 # Si el error tiene saltos de línea (como los de SAP), indentamos cada línea
                 error_lines = str(error).splitlines()
@@ -459,7 +459,8 @@ def process_all_tickets() -> None:
 
     # --- LIMPIEZA INICIAL ---
     logger.info("Cleaning up environment before starting...")
-    kill_processes(["msedge.exe", "saplogon.exe", "sapgui.exe"])
+    kill_processes(["msedge.exe", "msedgedriver.exe", "saplogon.exe", "sapgui.exe"])
+    time.sleep(2)  # Dar tiempo al OS de liberar los locks de los perfiles de Edge
 
     logger.info("START PROCESS | run_id=%s", run_id)
     logger.info("Run outputs will be written to: %s", run_output_dir)
@@ -534,7 +535,7 @@ def process_all_tickets() -> None:
                             "errors": errors,
                         }
                     )
-                    # client.reject_ticket(ticket_to_process.ticket_id, ", ".join(errors)) # Descomentar cuando la logica de rechazo este lista
+                    # client.suspend_ticket(ticket_to_process.ticket_id, ", ".join(errors)) # Descomentar cuando la logica de suspensión este lista
                 else:
                     logger.info("Ticket %s is VALID.", ticket_to_process.ticket_id)
                     valid_tickets.append(
@@ -570,7 +571,7 @@ def process_all_tickets() -> None:
         logger.info("--- PROCESSING COMPLETE ---")
         logger.info("Total tickets processed: %s", len(one_time_checks))
         logger.info("Valid tickets: %s", len(valid_tickets))
-        logger.info("Invalid tickets: %s", len(invalid_tickets))
+        logger.info("Invalid (Suspended) tickets: %s", len(invalid_tickets))
 
         generated_csvs: list[str] = []
         if valid_tickets:
@@ -589,8 +590,8 @@ def process_all_tickets() -> None:
             # 2. Validación SAP
             current_stage = "SAP validation"
             final_valid_csvs_by_group = defaultdict(list)
-            sap_rejected_invoices = set()
-            sap_all_rejection_reasons = {}
+            sap_suspended_invoices = set()
+            sap_all_suspension_reasons = {}
 
             for csv_path in candidate_csvs:
                 logger.info("--- Starting SAP Validation for: %s ---", Path(csv_path).name)
@@ -610,9 +611,9 @@ def process_all_tickets() -> None:
                     unique_suffix = f"{mail_group}_{vendor}"
                     sap_result = sap_client.validate_csv_until_clean(csv_path, retry_suffix=unique_suffix)
                     
-                    # Recolectar rechazos y sus motivos siempre
-                    sap_rejected_invoices.update(sap_result.get("all_rejected_invoices", []))
-                    sap_all_rejection_reasons.update(sap_result.get("rejection_reasons", {}))
+                    # Recolectar suspensiones y sus motivos siempre
+                    sap_suspended_invoices.update(sap_result.get("all_suspended_invoices", []))
+                    sap_all_suspension_reasons.update(sap_result.get("suspension_reasons", {}))
 
                     if sap_result["status"] == "clean":
                         clean_path = Path(sap_result["final_csv_path"])
@@ -628,15 +629,15 @@ def process_all_tickets() -> None:
                 finally:
                     sap_client.close()
 
-            # 3. Mover tickets rechazados por SAP a la lista de inválidos para el reporte
-            if sap_rejected_invoices:
-                logger.info("SAP rejected %s invoices. Updating counts.", len(sap_rejected_invoices))
+            # 3. Mover tickets suspendidos por SAP a la lista de inválidos para el reporte
+            if sap_suspended_invoices:
+                logger.info("SAP suspended %s invoices. Updating counts.", len(sap_suspended_invoices))
                 still_valid = []
                 for entry in valid_tickets:
                     inv = str(entry["processed_data"].get("InvoiceNum", "")).strip()
-                    if inv in sap_rejected_invoices:
-                        reasons = sap_all_rejection_reasons.get(inv, [])
-                        msg = "Rejected by SAP validation."
+                    if inv in sap_suspended_invoices:
+                        reasons = sap_all_suspension_reasons.get(inv, [])
+                        msg = "Suspended by SAP validation."
                         if reasons:
                             msg += "\n" + "\n".join(f"- {r}" for r in reasons)
                         entry["errors"] = entry.get("errors", []) + [msg]
@@ -672,7 +673,7 @@ def process_all_tickets() -> None:
             datetime.now(),
             one_time_checks, # Estos son todos los encontrados
             valid_tickets,    # Estos son los que pasaron SAP
-            invalid_tickets,  # Estos incluyen rechazos HDA y rechazos SAP
+            invalid_tickets,  # Estos incluyen suspensiones HDA y suspensiones SAP
             generated_csvs,
         )
         logger.info("Human-readable summary generated: %s", summary_path)

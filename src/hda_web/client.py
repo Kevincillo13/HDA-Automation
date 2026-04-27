@@ -851,14 +851,14 @@ class HDAClient:
     def download_payment_request_pdf(self, ticket_id: str) -> str:
         raise NotImplementedError
 
-    def reject_ticket(self, ticket_id: str, reason: str) -> None:
-        """Rechaza un ticket en el portal. (Implementacion basica)."""
+    def suspend_ticket(self, ticket_id: str, reason: str) -> None:
+        """Suspende un ticket en el portal. (Implementacion basica)."""
         if not self.driver:
             raise RuntimeError("Browser session not started.")
 
         self.logger.warning(
-            "REJECTING TICKET | ticket_id=%s | reason=%s", ticket_id, reason
+            "SUSPENDING TICKET | ticket_id=%s | reason=%s", ticket_id, reason
         )
-        # TODO: Implementar la logica real para rechazar en la UI.
+        # TODO: Implementar la logica real para suspender en la UI.
         # Por ahora, solo logeamos y cerramos la pestaña.
-        self.logger.info("Ticket rejection logic not implemented. Skipping UI interaction.")
+        self.logger.info("Ticket suspension logic not implemented. Skipping UI interaction.")

@@ -19,7 +19,7 @@ Current high-level status
 - SMTP sending: working.
 - SAP login/TCode open/base form fill/test execution: working enough to test.
 - SAP result-table inspection/logging: working.
-- Rejecting tickets in HDA: NOT implemented yet.
+- Suspending tickets in HDA: NOT implemented yet.
 - Process 2: NOT implemented yet.
 
 Important repo areas
@@ -185,7 +185,7 @@ AFS table
 - all company codes starting with E except E100 | 8000001 | USD
 
 Interpretation from meeting:
-- cases marked "no aplica" likely should be rejected
+- cases marked "no aplica" likely should be suspended
 - this table should become a pre-SAP validation rule
 
 FMS table
@@ -194,7 +194,7 @@ FMS table
 - E100 | 900000 | USD
 
 Interpretation:
-- if a generated CSV row combination falls outside these allowed combos, likely reject before SAP.
+- if a generated CSV row combination falls outside these allowed combos, likely suspend before SAP.
 
 Important SAP result-table discovery
 - Latest inspected SAP result table ID:
@@ -288,11 +288,11 @@ Expected final Process 1 flow
 1. Login HDA
 2. Read all OneTime Check tickets
 3. Run local validation
-4. Reject obviously invalid local rows later (not implemented yet)
+4. Suspend obviously invalid local rows later (not implemented yet)
 5. Generate CSV candidates
 6. Run SAP test validation on each candidate CSV
 7. Parse SAP result table
-8. Remove bad rows / reject corresponding tickets
+8. Remove bad rows / suspend corresponding tickets
 9. Rebuild/retest until SAP clean
 10. Consolidate final delivery CSVs if needed
 11. Send final emails
@@ -311,10 +311,10 @@ Email/delivery knowledge from meeting
   when applicable
 - Need to avoid mixing currencies in the same final file.
 
-Rejected tickets
-- Rejection flow in HDA was NOT covered enough in the latest meeting.
+Suspended tickets
+- Suspension flow in HDA was NOT covered enough in the latest meeting.
 - Still pending.
-- reject_ticket in src/hda_web/client.py is still just a stub/logger.
+- suspend_ticket in src/hda_web/client.py is still just a stub/logger.
 
 Process 2 status
 - Not urgent yet.
@@ -330,7 +330,7 @@ What another chat should do next
    - classify success vs error messages
 4. Add allowed-combination validation from AFS/FMS tables before SAP
 5. Integrate SAP validation loop into Process 1
-6. Leave HDA rejection for after SAP parsing is stable
+6. Leave HDA suspension for after SAP parsing is stable
 
 Suggested immediate next implementation steps
 - Add a formal allowed-combinations table in code for AFS/FMS.
