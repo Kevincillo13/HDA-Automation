@@ -468,6 +468,7 @@ class SAPGuiClient:
         current_csv_path = str(Path(csv_path).resolve())
         iteration_history: list[dict[str, Any]] = []
         all_rejected_invoices: set[str] = set()
+        rejection_reasons: dict[str, list[str]] = {}
         system_group = self.infer_system_group_from_csv_path(current_csv_path)
         tcode = self._resolve_tcode(system_group)
 
@@ -523,6 +524,7 @@ class SAPGuiClient:
                     "iterations": iteration_history,
                     "last_validation_payload": validation_payload,
                     "all_rejected_invoices": sorted(list(all_rejected_invoices)),
+                    "rejection_reasons": rejection_reasons,
                 }
 
             # Collect all invoices that need to be removed to proceed
@@ -538,6 +540,15 @@ class SAPGuiClient:
 
             if unique_blocking:
                 all_rejected_invoices.update(unique_blocking)
+                
+                # Capturar motivos de rechazo para el reporte
+                grouped = validation_results.get("grouped_by_invoice", {})
+                for inv in unique_blocking:
+                    if inv in grouped:
+                        msgs = grouped[inv].get("error_messages", [])
+                        if msgs:
+                            rejection_reasons[inv] = msgs
+
                 next_csv_path = self._build_retry_csv_without_invoices(
                     current_csv_path,
                     unique_blocking,
@@ -555,6 +566,7 @@ class SAPGuiClient:
                         "iterations": iteration_history,
                         "last_validation_payload": validation_payload,
                         "all_rejected_invoices": sorted(list(all_rejected_invoices)),
+                        "rejection_reasons": rejection_reasons,
                     }
                 current_csv_path = next_csv_path
                 continue
@@ -569,6 +581,7 @@ class SAPGuiClient:
                 "iterations": iteration_history,
                 "last_validation_payload": validation_payload,
                 "all_rejected_invoices": sorted(list(all_rejected_invoices)),
+                "rejection_reasons": rejection_reasons,
             }
 
         self.logger.warning(
@@ -581,6 +594,7 @@ class SAPGuiClient:
             "final_csv_path": current_csv_path,
             "iterations": iteration_history,
             "all_rejected_invoices": sorted(list(all_rejected_invoices)),
+            "rejection_reasons": rejection_reasons,
         }
 
     def get_session(self) -> Any:

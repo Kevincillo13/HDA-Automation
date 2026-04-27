@@ -10,6 +10,7 @@ from src.common.config import get_settings
 from src.common.logger import get_logger
 from src.common.models import TicketRecord
 from src.common.run_context import get_run_id, start_run
+from src.common.system import kill_processes
 from src.excel_builder.builder import AP15Builder
 from src.hda_web.client import HDAClient
 from src.hda_web.ticket_parser import extract_ticket_data
@@ -80,7 +81,12 @@ def _write_human_summary(
             lines.append(f"- {ticket.ticket_id} | subject={ticket.subject} | company={ticket.company}")
             lines.append("  Reasons for rejection:")
             for error in errors:
-                lines.append(f"    * {error}")
+                # Si el error tiene saltos de línea (como los de SAP), indentamos cada línea
+                error_lines = str(error).splitlines()
+                if error_lines:
+                    lines.append(f"    * {error_lines[0]}")
+                    for subline in error_lines[1:]:
+                        lines.append(f"      {subline}")
             lines.append("")
     else:
         lines.append("None")
@@ -187,8 +193,10 @@ def _build_summary_email_html(
                 f"GL: {processed.get('GLAccount', 'N/A')}",
             ]
             if include_errors and errors:
-                detail_lines.append("Errors: " + "; ".join(str(error) for error in errors))
-            details = "<br>".join(escape(line) for line in detail_lines)
+                # Unir múltiples errores con saltos de línea y convertir \n a <br>
+                err_text = "<br>".join(escape(str(error)).replace("\n", "<br>") for error in errors)
+                detail_lines.append(f"Errors: {err_text}")
+            details = "<br>".join(detail_lines) # Quité el escape global porque err_text ya está escapado
             rows.append(
                 "<tr>"
                 f"<td style='padding:12px;border:1px solid #d9dee8;vertical-align:top;'>{escape(ticket.ticket_id)}</td>"
@@ -449,6 +457,10 @@ def process_all_tickets() -> None:
     builder = AP15Builder(str(run_output_dir))
     current_stage = "initialization"
 
+    # --- LIMPIEZA INICIAL ---
+    logger.info("Cleaning up environment before starting...")
+    kill_processes(["msedge.exe", "saplogon.exe", "sapgui.exe"])
+
     logger.info("START PROCESS | run_id=%s", run_id)
     logger.info("Run outputs will be written to: %s", run_output_dir)
     valid_tickets: list[dict[str, Any]] = []
@@ -578,6 +590,7 @@ def process_all_tickets() -> None:
             current_stage = "SAP validation"
             final_valid_csvs_by_group = defaultdict(list)
             sap_rejected_invoices = set()
+            sap_all_rejection_reasons = {}
 
             for csv_path in candidate_csvs:
                 logger.info("--- Starting SAP Validation for: %s ---", Path(csv_path).name)
@@ -597,8 +610,9 @@ def process_all_tickets() -> None:
                     unique_suffix = f"{mail_group}_{vendor}"
                     sap_result = sap_client.validate_csv_until_clean(csv_path, retry_suffix=unique_suffix)
                     
-                    # Recolectar rechazos siempre
+                    # Recolectar rechazos y sus motivos siempre
                     sap_rejected_invoices.update(sap_result.get("all_rejected_invoices", []))
+                    sap_all_rejection_reasons.update(sap_result.get("rejection_reasons", {}))
 
                     if sap_result["status"] == "clean":
                         clean_path = Path(sap_result["final_csv_path"])
@@ -621,7 +635,11 @@ def process_all_tickets() -> None:
                 for entry in valid_tickets:
                     inv = str(entry["processed_data"].get("InvoiceNum", "")).strip()
                     if inv in sap_rejected_invoices:
-                        entry["errors"] = entry.get("errors", []) + ["Rejected by SAP validation"]
+                        reasons = sap_all_rejection_reasons.get(inv, [])
+                        msg = "Rejected by SAP validation."
+                        if reasons:
+                            msg += "\n" + "\n".join(f"- {r}" for r in reasons)
+                        entry["errors"] = entry.get("errors", []) + [msg]
                         invalid_tickets.append(entry)
                     else:
                         still_valid.append(entry)
