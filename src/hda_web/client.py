@@ -324,6 +324,260 @@ class HDAClient:
             self.take_screenshot("close_tab_error")
             raise
 
+    def suspend_ticket(self, ticket_id: str, reasons: list[str]) -> None:
+        """
+        Suspende un ticket usando la UI de HDA.
+        """
+        if not self.driver:
+            raise RuntimeError("Browser session not started.")
+
+        wait = WebDriverWait(self.driver, 20)
+        self.logger.info("Iniciando proceso de suspensión en HDA para el ticket: %s", ticket_id)
+
+        try:
+            # 1. Clic en Autoasignar
+            self.logger.info("Buscando botón 'Autoasignar' (basado en icono)...")
+            autoasignar_xpath = "//a[.//span[contains(@class, 'icon-ownership')]]"
+            
+            start_time = time.time()
+            autoasignar_clicked = False
+            while time.time() - start_time < 5:
+                botones = self.driver.find_elements(By.XPATH, autoasignar_xpath)
+                visible = next((b for b in botones if b.is_displayed()), None)
+                if visible:
+                    self.driver.execute_script("arguments[0].click();", visible)
+                    autoasignar_clicked = True
+                    break
+                time.sleep(0.5)
+
+            if autoasignar_clicked:
+                self._pause(1.0)
+
+                # 2. Aceptar el Autoasignar (Sí)
+                self.logger.info("Confirmando 'Autoasignar' (Buscando botón Sí/OK/Yes)...")
+                
+                # Buscamos cualquier botón visible que tenga el texto de confirmación
+                si_xpath = "//a[contains(@class, 'x-btn')]//span[normalize-space(text())='Sí' or normalize-space(text())='Yes' or normalize-space(text())='OK' or normalize-space(text())='Aceptar']"
+                
+                start_confirm = time.time()
+                si_clicked = False
+                while time.time() - start_confirm < 10:
+                    btns = self.driver.find_elements(By.XPATH, si_xpath)
+                    # Filtramos por el que realmente se ve
+                    visible_si = next((b for b in btns if b.is_displayed()), None)
+                    if visible_si:
+                        self.driver.execute_script("arguments[0].click();", visible_si)
+                        si_clicked = True
+                        break
+                    time.sleep(0.5)
+                
+                if not si_clicked:
+                    raise TimeoutException("No se encontró el botón de confirmación 'Sí' visible.")
+                
+                self._pause(2.0)
+                self.logger.info("Ticket autoasignado con éxito.")
+            else:
+                self.logger.info("El botón 'Autoasignar' no está disponible o ya está asignado. Continuando...")
+
+            # --- PASO 2: Escribir Solución ---
+            self.logger.info("Escribiendo solución...")
+            solution_text = "SUSPENDED\n\nReasons:\n- " + "\n- ".join(reasons)
+            
+            self._pause(2.0)  # Pausa extra para que el editor TinyMCE se estabilice tras autoasignar
+            
+            try:
+                start_sol = time.time()
+                written = False
+                while time.time() - start_sol < 15:
+                    try:
+                        iframes = self.driver.find_elements(By.CSS_SELECTOR, "iframe[id$='_SolutionHTML_SolutionHTML_ifr']")
+                        visible_iframe = next((f for f in iframes if f.is_displayed()), None)
+                        
+                        if visible_iframe:
+                            self.driver.switch_to.frame(visible_iframe)
+                            # Esperamos a que el body esté presente y sea interactuable
+                            body = WebDriverWait(self.driver, 5).until(
+                                ec.element_to_be_clickable((By.TAG_NAME, "body"))
+                            )
+                            body.click()
+                            self._pause(0.5)
+                            
+                            # Limpieza y escritura
+                            self.driver.execute_script("document.body.innerHTML = '';")
+                            body.send_keys(solution_text)
+                            
+                            from selenium.webdriver.common.keys import Keys
+                            body.send_keys(Keys.TAB)
+                            
+                            self.driver.switch_to.default_content()
+                            written = True
+                            self.logger.info("Solución escrita correctamente.")
+                            break
+                        else:
+                            self.logger.info("Esperando a que el cuadro de solución sea visible...")
+                    except Exception as e:
+                        self.logger.warning(f"Reintentando escritura de solución por error temporal: {e}")
+                        self.driver.switch_to.default_content()
+                    
+                    time.sleep(1.0)
+                
+                if not written:
+                    self.logger.warning("No se pudo escribir la solución tras varios intentos.")
+                    
+            except Exception as e:
+                self.logger.error("Error crítico al escribir la solución: %s", e)
+                self.driver.switch_to.default_content()
+
+            self.logger.info("--- PASO 2 COMPLETADO: Solución escrita ---")
+
+            # --- PASO 3: Seleccionar Categoría ---
+            self.logger.info("Abriendo menú de Categoría...")
+            try:
+                # Localizamos el selector de categoría
+                cat_arrow = WebDriverWait(self.driver, 10).until(
+                    ec.element_to_be_clickable((By.CSS_SELECTOR, "button[id$='_TicketCategoryID-trigger-picker']"))
+                )
+                self.driver.execute_script("arguments[0].click();", cat_arrow)
+                self._pause(1.5)
+
+                # Buscamos y expandimos 'Payment Request'
+                try:
+                    self.logger.info("Buscando y expandiendo 'Payment Request'...")
+                    # Buscamos el texto en el árbol (ignorando mayúsculas/minúsculas con translate si fuera necesario, pero contains es suficiente aquí)
+                    payment_node = WebDriverWait(self.driver, 5).until(
+                        ec.presence_of_element_located((By.XPATH, "//*[contains(@class, 'x-tree-node-text') and contains(normalize-space(.), 'Payment Request')]"))
+                    )
+                    self._scroll_into_view(payment_node)
+                    
+                    # Verificamos si ya está expandido
+                    parent_row = payment_node.find_element(By.XPATH, "./ancestor::tr")
+                    is_expanded = "x-grid-tree-node-expanded" in parent_row.get_attribute("class")
+                    
+                    if not is_expanded:
+                        # Intentamos darle clic al expander o al texto mismo
+                        try:
+                            # Buscamos cualquier elemento de expansión (flecha, icono, etc)
+                            expander = parent_row.find_element(By.XPATH, ".//*[contains(@class, 'x-tree-expander') or contains(@class, 'x-tree-elbow-img')]")
+                            self.driver.execute_script("arguments[0].click();", expander)
+                        except Exception:
+                            # Si falla el expander, clic al texto
+                            self.driver.execute_script("arguments[0].click();", payment_node)
+                        
+                        self._pause(1.5) # Esperamos a que se despliegue la lista
+                    else:
+                        self.logger.info("'Payment Request' ya está expandido.")
+                except Exception as e:
+                    self.logger.info(f"Nota: Problema al expandir 'Payment Request': {e}")
+
+                # Seleccionamos 'Non-AP15 One-time'
+                self.logger.info("Seleccionando 'Non-AP15 One-time'...")
+                non_ap15_xpath = "//*[contains(@class, 'x-tree-node-text') and contains(normalize-space(.), 'Non-AP15')]"
+                non_ap15_text = WebDriverWait(self.driver, 10).until(
+                    ec.presence_of_element_located((By.XPATH, non_ap15_xpath))
+                )
+                self._scroll_into_view(non_ap15_text)
+                
+                # Buscamos el checkbox en esa misma fila y le damos clic
+                checkbox = non_ap15_text.find_element(By.XPATH, "./ancestor::tr//input")
+                self.driver.execute_script("arguments[0].click();", checkbox)
+                
+                self.logger.info("Categoría seleccionada con éxito.")
+                
+            except Exception as e:
+                self.logger.error("Error al seleccionar la categoría: %s", e)
+
+            # --- PASO 4: Clic en 'Cambiar estado...' ---
+            self.logger.info("Haciendo clic en 'Cambiar estado...' (basado en icono)...")
+            cambiar_estado_xpath = "//a[.//span[contains(@class, 'icon-changestatus')]]"
+            
+            try:
+                start_ce = time.time()
+                ce_clicked = False
+                while time.time() - start_ce < 10:
+                    botones = self.driver.find_elements(By.XPATH, cambiar_estado_xpath)
+                    # Filtramos por visibilidad
+                    visible_ce = next((b for b in botones if b.is_displayed()), None)
+                    if visible_ce:
+                        self.driver.execute_script("arguments[0].click();", visible_ce)
+                        ce_clicked = True
+                        break
+                    time.sleep(0.5)
+                
+                if not ce_clicked:
+                    raise TimeoutException("No se encontró el botón de 'Cambiar estado...' visible.")
+                
+                self.logger.info("Botón 'Cambiar estado...' clicado con éxito. Esperando alerta...")
+                self._pause(1.5)
+
+                # --- PASO 5: Aceptar alerta de confirmación (Sí) ---
+                self.logger.info("Confirmando alerta de cambio de estado (Buscando botón Sí/OK/Yes)...")
+                si_xpath = "//a[contains(@class, 'x-btn')]//span[normalize-space(text())='Sí' or normalize-space(text())='Yes' or normalize-space(text())='OK' or normalize-space(text())='Aceptar']"
+                
+                start_confirm = time.time()
+                confirm_clicked = False
+                while time.time() - start_confirm < 10:
+                    btns = self.driver.find_elements(By.XPATH, si_xpath)
+                    visible_si = next((b for b in btns if b.is_displayed()), None)
+                    if visible_si:
+                        self.driver.execute_script("arguments[0].click();", visible_si)
+                        confirm_clicked = True
+                        break
+                    time.sleep(0.5)
+                
+                if confirm_clicked:
+                    self.logger.info("Alerta confirmada con éxito.")
+                else:
+                    self.logger.warning("No se encontró la alerta de confirmación o se cerró sola.")
+
+                self._pause(2.0)
+
+                # --- PASO 6: Seleccionar 'Suspended' y Ejecutar ---
+                self.logger.info("Abriendo menú de nuevo estado...")
+                status_arrow = WebDriverWait(self.driver, 10).until(
+                    ec.element_to_be_clickable((By.CSS_SELECTOR, "button[id$='_cbStatus-trigger-picker']"))
+                )
+                self.driver.execute_script("arguments[0].click();", status_arrow)
+                self._pause(1.0)
+
+                self.logger.info("Buscando opción 'Suspended'...")
+                # Buscamos en los menús desplegables (boundlist)
+                suspended_xpath = "//div[contains(@class, 'x-boundlist')]//li[contains(normalize-space(.), 'Suspend')]"
+                suspended_option = WebDriverWait(self.driver, 10).until(
+                    ec.element_to_be_clickable((By.XPATH, suspended_xpath))
+                )
+                self.driver.execute_script("arguments[0].click();", suspended_option)
+                self._pause(1.0)
+
+                self.logger.info("Haciendo clic en 'Ejecutar'...")
+                # El botón de guardado final suele tener un ID que termina en _BtnOK
+                start_exec = time.time()
+                exec_clicked = False
+                while time.time() - start_exec < 10:
+                    btns = self.driver.find_elements(By.CSS_SELECTOR, "a[id$='_BtnOK']")
+                    visible_btn = next((b for b in btns if b.is_displayed()), None)
+                    if visible_btn:
+                        self.driver.execute_script("arguments[0].click();", visible_btn)
+                        exec_clicked = True
+                        break
+                    time.sleep(0.5)
+                
+                if exec_clicked:
+                    self.logger.info("¡Proceso de suspensión completado con éxito!")
+                else:
+                    raise TimeoutException("No se encontró el botón 'Ejecutar' visible.")
+
+                self._pause(3.0)
+                
+            except Exception as e:
+                self.logger.error("Error en el paso final de cambio de estado: %s", e)
+
+            self.logger.info("--- FLUJO COMPLETADO ---")
+
+        except Exception as exc:
+            self.logger.error("Error al suspender el ticket %s: %s", ticket_id, exc)
+            self.take_screenshot(f"error_suspend_{ticket_id}")
+            raise
+
     def take_screenshot(self, name: str) -> Path:
         """Guarda screenshot en la carpeta de evidencia."""
         if not self.driver:
@@ -856,14 +1110,3 @@ class HDAClient:
     def download_payment_request_pdf(self, ticket_id: str) -> str:
         raise NotImplementedError
 
-    def suspend_ticket(self, ticket_id: str, reason: str) -> None:
-        """Suspende un ticket en el portal. (Implementacion basica)."""
-        if not self.driver:
-            raise RuntimeError("Browser session not started.")
-
-        self.logger.warning(
-            "SUSPENDING TICKET | ticket_id=%s | reason=%s", ticket_id, reason
-        )
-        # TODO: Implementar la logica real para suspender en la UI.
-        # Por ahora, solo logeamos y cerramos la pestaña.
-        self.logger.info("Ticket suspension logic not implemented. Skipping UI interaction.")

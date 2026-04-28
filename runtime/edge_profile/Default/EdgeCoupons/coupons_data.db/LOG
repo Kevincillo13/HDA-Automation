@@ -1,0 +1,5 @@
+2026/04/28-11:18:08.640 5934 Creating DB C:\Users\projectci\Desktop\Automation\runtime\edge_profile\Default\EdgeCoupons/coupons_data.db since it was missing.
+2026/04/28-11:18:09.110 5934 Reusing MANIFEST C:\Users\projectci\Desktop\Automation\runtime\edge_profile\Default\EdgeCoupons/coupons_data.db/MANIFEST-000001
+2026/04/28-11:18:35.405 8214 Level-0 table #5: started
+2026/04/28-11:18:35.420 8214 Level-0 table #5: 682129 bytes OK
+2026/04/28-11:18:35.427 8214 Delete type=0 #3
