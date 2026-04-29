@@ -366,7 +366,6 @@ def _resolve_mail_recipients(settings: Any, mail_type: str) -> list[str]:
     normalized = preferred_recipient.replace(";", ",")
     return [recipient.strip() for recipient in normalized.split(",") if recipient.strip()]
 
-
 def _collect_one_time_checks_with_retry(
     client: HDAClient,
     logger: Any,
@@ -397,13 +396,14 @@ def _collect_one_time_checks_with_retry(
 
         tickets = client.read_payment_grid_rows()
         last_tickets = tickets
-        # MODIFICAR AQUI PARA TESTEO: Agrega o quita "Assigned" de esta lista según necesites probar
-        ALLOWED_HDA_STATUSES = ["Open", "Assigned"]
         
+        # --- EL FILTRO CORREGIDO Y BLINDADO ---
+        # Usamos "in" y eliminamos caracteres invisibles (\xa0) para evitar que ExtJS nos engañe.
+        # Además, validamos explícitamente los estados permitidos.
         one_time_checks = [
             ticket for ticket in tickets 
-            if ticket.payment_method.strip() == "OneTime Check" 
-            and ticket.hda_status.strip() in ALLOWED_HDA_STATUSES
+            if "onetime check" in ticket.payment_method.replace('\xa0', ' ').strip().lower()
+            and ticket.status.replace('\xa0', ' ').strip().lower() in ["open", "assigned", "suspended"]
         ]
 
         empty_payment_method = len(
@@ -440,7 +440,6 @@ def _collect_one_time_checks_with_retry(
             )
 
     return last_tickets, one_time_checks
-
 
 def process_all_tickets() -> None:
     """

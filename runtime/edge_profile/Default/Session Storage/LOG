@@ -1,5 +1,0 @@
-2026/04/28-11:18:02.775 7c3c Creating DB C:\Users\projectci\Desktop\Automation\runtime\edge_profile\Default\Session Storage since it was missing.
-2026/04/28-11:18:02.883 7c3c Reusing MANIFEST C:\Users\projectci\Desktop\Automation\runtime\edge_profile\Default\Session Storage/MANIFEST-000001
-2026/04/28-11:18:58.856 7c3c Level-0 table #5: started
-2026/04/28-11:18:58.894 7c3c Level-0 table #5: 330085 bytes OK
-2026/04/28-11:18:58.903 7c3c Delete type=0 #3
