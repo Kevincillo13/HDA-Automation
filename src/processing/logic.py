@@ -213,7 +213,13 @@ def normalize_date(value: str) -> str:
     if not value or value == "Empty":
         return "Empty"
 
-    raw_value = value.split(" ")[0].strip()
+    # Manejo de formato pegado (DD/MM/YYYYHH:MM)
+    raw_value = value.replace('\xa0', ' ').strip()
+    if len(raw_value) >= 15 and ' ' not in raw_value and raw_value.count('/') == 2:
+        raw_value = raw_value[:10]
+    else:
+        raw_value = raw_value.split(" ")[0].strip()
+
     formats = [
         "%d/%m/%Y",
         "%m/%d/%Y",
@@ -233,7 +239,13 @@ def _is_parseable_date(value: str) -> bool:
     if not value or value == "Empty":
         return False
 
-    raw_value = str(value).split(" ")[0].strip()
+    # Manejo de formato pegado (DD/MM/YYYYHH:MM)
+    raw_value = str(value).replace('\xa0', ' ').strip()
+    if len(raw_value) >= 15 and ' ' not in raw_value and raw_value.count('/') == 2:
+        raw_value = raw_value[:10]
+    else:
+        raw_value = raw_value.split(" ")[0].strip()
+
     formats = [
         "%m/%d/%Y",
         "%d/%m/%Y",
