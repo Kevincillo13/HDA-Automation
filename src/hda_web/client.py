@@ -347,31 +347,17 @@ class HDAClient:
         self.driver.execute_script("arguments[0].scrollIntoView(true);", cat_btn)
         self._pause(1.0)
         self.driver.execute_script("arguments[0].click();", cat_btn)
-        self._pause(3.0) # Un poco más de tiempo para que el árbol cargue
-
-        # --- BLOQUE DE DEPURACIÓN: Leer opciones del árbol ---
-        try:
-            self.logger.info("Depuración: Leyendo nodos del árbol de categorías...")
-            nodes = self.driver.find_elements(By.XPATH, "//*[contains(@class, 'x-tree-node-text')]")
-            self.logger.info("Nodos encontrados: %s", len(nodes))
-            for i, node in enumerate(nodes):
-                txt = node.text.strip() or node.get_attribute("textContent").strip()
-                self.logger.info("Nodo [%s]: '%s' (Visible: %s)", i, txt, node.is_displayed())
-        except Exception as e:
-            self.logger.warning("No se pudieron leer los nodos del árbol: %s", e)
-        # -----------------------------------------------------
+        self._pause(3.0)
         
         # Expandir "Payment Request"
         try:
             self.logger.info("Buscando 'Payment Request' para expandir...")
-            # Usamos un XPath más flexible por si el texto varía
             payment_req_xpath = "//*[contains(@class, 'x-tree-node-text')][contains(text(), 'Payment Request')]"
             payment_el = wait.until(ec.visibility_of_element_located((By.XPATH, payment_req_xpath)))
             self.driver.execute_script("arguments[0].scrollIntoView(true);", payment_el)
             self._pause(1.0)
             
             self.logger.info("Intentando expandir 'Payment Request'...")
-            # Intentamos primero por el icono expander si existe en la misma fila
             try:
                 expander = payment_el.find_element(By.XPATH, "./ancestor::tr//span[contains(@class, 'x-tree-expander')]")
                 self.driver.execute_script("arguments[0].click();", expander)
@@ -394,19 +380,17 @@ class HDAClient:
 
         self.logger.info("Intentando seleccionar 'Non-AP15'...")
         try:
-            # Estrategia A: Buscar checkbox en la fila y darle clic
             parent_row = category_opt.find_element(By.XPATH, "./ancestor::tr")
             checkbox = parent_row.find_elements(By.XPATH, ".//*[contains(@class, 'x-tree-checkbox')]")
             if checkbox:
                 self.logger.info("Clic en el checkbox detectado.")
                 self.driver.execute_script("arguments[0].click();", checkbox[0])
             else:
-                # Estrategia B: Doble clic en el texto
-                self.logger.info("No se detectó checkbox, aplicando doble clic al texto.")
+                self.logger.info("Aplicando doble clic al texto.")
                 actions = ActionChains(self.driver)
                 actions.move_to_element(category_opt).double_click().perform()
         except Exception as e:
-            self.logger.warning("Error en selección detallada, probando clic simple JS: %s", e)
+            self.logger.warning("Error en selección, probando clic simple: %s", e)
             self.driver.execute_script("arguments[0].click();", category_opt)
         
         self._pause(2.0)
@@ -422,12 +406,10 @@ class HDAClient:
         self._pause(3.0)
 
         # Dropdown dentro del modal
-        # Dropdown dentro del modal (Bucle antibloqueo ExtJS + Puppeteer)
-        self.logger.info("Abriendo dropdown de nuevo estado (usando inputEl)...")
+        self.logger.info("Abriendo dropdown de nuevo estado...")
         start_arrow = time.time()
         arrow_clicked = False
         while time.time() - start_arrow < 10:
-            # CAMBIO CLAVE 1: Buscamos el inputEl real que abre la lista
             inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[id$='_cbStatus-inputEl']")
             visible_input = next((i for i in inputs if i.is_displayed()), None)
             if visible_input:
@@ -437,7 +419,7 @@ class HDAClient:
             time.sleep(0.5)
             
         if not arrow_clicked:
-            raise TimeoutException("No se encontró la caja de texto del estado.")
+            raise TimeoutException("No se encontró el selector de estado.")
         self._pause(1.5)
 
         self.logger.info("Seleccionando 'Suspend'...")
@@ -454,15 +436,14 @@ class HDAClient:
             time.sleep(0.5)
             
         if not opt_clicked:
-            raise TimeoutException("No se encontró la opción 'Suspended' visible.")
+            raise TimeoutException("No se encontró la opción 'Suspend' visible.")
         self._pause(1.5)
 
         self.logger.info("Haciendo clic en 'Ejecutar'...")
         start_exec = time.time()
         exec_clicked = False
         while time.time() - start_exec < 10:
-            # CAMBIO CLAVE 2: Buscamos el texto interior del botón
-            btns = self.driver.find_elements(By.CSS_SELECTOR, "[id$='_BtnOK-btnInnerEl']")
+            btns = self.driver.find_elements(By.CSS_SELECTOR, "[id$='_BtnOK-btnInnerEl'], a[id$='_BtnOK']")
             visible_btn = next((b for b in btns if b.is_displayed()), None)
             if visible_btn:
                 self.driver.execute_script("arguments[0].click();", visible_btn)
@@ -471,29 +452,7 @@ class HDAClient:
             time.sleep(0.5)
             
         if not exec_clicked:
-            raise TimeoutException("No se encontró el botón 'Ejecutar' visible.")
-        
-        self._pause(5.0)
-        self.logger.info("Ticket %s suspendido exitosamente.", ticket_id)
-            
-        if not opt_clicked:
-            raise TimeoutException("No se encontró la opción 'Suspended' visible.")
-        self._pause(1.5)
-
-        self.logger.info("Haciendo clic en 'Ejecutar'...")
-        start_exec = time.time()
-        exec_clicked = False
-        while time.time() - start_exec < 10:
-            btns = self.driver.find_elements(By.CSS_SELECTOR, "a[id$='_BtnOK']")
-            visible_btn = next((b for b in btns if b.is_displayed()), None)
-            if visible_btn:
-                self.driver.execute_script("arguments[0].click();", visible_btn)
-                exec_clicked = True
-                break
-            time.sleep(0.5)
-            
-        if not exec_clicked:
-            raise TimeoutException("No se encontró el botón 'Ejecutar' visible.")
+            raise TimeoutException("No se encontró el botón 'Ejecutar'.")
         
         self._pause(5.0)
         self.logger.info("Ticket %s suspendido exitosamente.", ticket_id)
