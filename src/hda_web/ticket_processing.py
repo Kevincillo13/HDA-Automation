@@ -668,6 +668,27 @@ def process_all_tickets() -> None:
 
         else:
             logger.info("No valid tickets passed HDA validation.")
+            
+        # --- NUEVO PASO: SUSPENSIÓN AUTOMÁTICA EN EL PORTAL ---
+        if invalid_tickets:
+            current_stage = "automatic suspension in HDA"
+            logger.info("--- STARTING AUTOMATIC SUSPENSION FOR %s TICKETS ---", len(invalid_tickets))
+            for item in invalid_tickets:
+                ticket_id = item["ticket"].ticket_id
+                reasons = item.get("errors", ["Unknown validation failure"])
+                
+                try:
+                    logger.info("Suspending ticket %s in HDA...", ticket_id)
+                    client.open_ticket_by_id(ticket_id)
+                    client.suspend_ticket_ui(ticket_id, reasons)
+                    logger.info("Ticket %s successfully suspended.", ticket_id)
+                except Exception as susp_exc:
+                    logger.error("Failed to suspend ticket %s: %s", ticket_id, susp_exc)
+                    client.take_screenshot(f"suspend_fail_{ticket_id}")
+                finally:
+                    client.close_active_ticket_tab()
+            
+            logger.info("--- AUTOMATIC SUSPENSION PROCESS COMPLETE ---")
 
         # 5. Generar reporte con terminología clara
         summary_path = _write_human_summary(

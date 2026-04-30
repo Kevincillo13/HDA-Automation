@@ -9,6 +9,7 @@ from selenium import webdriver
 from selenium.common.exceptions import InvalidSessionIdException, TimeoutException, WebDriverException
 from selenium.webdriver import ActionChains
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.edge.options import Options
 from selenium.webdriver.edge.service import Service
 from selenium.webdriver.support import expected_conditions as ec
@@ -301,13 +302,201 @@ class HDAClient:
             self.logger.warning("Could not seamlessly close tab: %s", exc)
             self._ensure_payments_tab_active()
 
-    def suspend_ticket(self, ticket_id: str, reasons: list[str]) -> None:
-        """Versión simplificada para pruebas: Solo loguea la intención."""
+    def suspend_ticket_ui(self, ticket_id: str, reasons: list[str]) -> None:
+        """
+        Ejecuta la coreografía de UI en HDA para suspender un ticket con pausas constantes.
+        """
         if not self.driver:
             raise RuntimeError("Browser session not started.")
-            
-        self.logger.info(f"TEST MODE: Would have suspended ticket {ticket_id} for reasons: {reasons}")
+
+        wait = WebDriverWait(self.driver, 20)
+        self.logger.info("Iniciando proceso de suspensión para ticket: %s", ticket_id)
+
+        # 1. Autoasignar
+        try:
+            self.logger.info("Paso 1: Autoasignando...")
+            auto_btn_xpath = "//a[@aria-label='Autoasignar...' and @aria-hidden='false']"
+            auto_btn = WebDriverWait(self.driver, 5).until(
+                ec.element_to_be_clickable((By.XPATH, auto_btn_xpath))
+            )
+            self.driver.execute_script("arguments[0].click();", auto_btn)
+            self._pause(2.0)
+            self.driver.switch_to.active_element.send_keys(Keys.ENTER)
+            self._pause(2.0)
+            self.logger.info("Ticket autoasignado.")
+        except Exception:
+            self.logger.info("Autoasignar no disponible o ya asignado.")
+
+        # 2. Escribir Solución
         self._pause(1.0)
+        self.logger.info("Paso 2: Escribiendo solución...")
+        solution_iframe_css = 'iframe[id$="_SolutionHTML_SolutionHTML_ifr"]'
+        wait.until(ec.presence_of_element_located((By.CSS_SELECTOR, solution_iframe_css)))
+        self.driver.switch_to.frame(self.driver.find_element(By.CSS_SELECTOR, solution_iframe_css))
+        body = wait.until(ec.presence_of_element_located((By.TAG_NAME, "body")))
+        body.clear()
+        motivos_text = "SUSPENDED:\n" + "\n".join(f"- {r}" for r in reasons)
+        body.send_keys(motivos_text)
+        self.driver.switch_to.default_content()
+        self._pause(1.0)
+
+        # 3. Cambiar Categoría
+        self.logger.info("Paso 3: Seleccionando categoría Non-AP15...")
+        cat_trigger_xpath = "//button[contains(@id, '_TicketCategoryID-trigger-picker')]"
+        cat_btn = wait.until(ec.presence_of_element_located((By.XPATH, cat_trigger_xpath)))
+        self.driver.execute_script("arguments[0].scrollIntoView(true);", cat_btn)
+        self._pause(1.0)
+        self.driver.execute_script("arguments[0].click();", cat_btn)
+        self._pause(3.0) # Un poco más de tiempo para que el árbol cargue
+
+        # --- BLOQUE DE DEPURACIÓN: Leer opciones del árbol ---
+        try:
+            self.logger.info("Depuración: Leyendo nodos del árbol de categorías...")
+            nodes = self.driver.find_elements(By.XPATH, "//*[contains(@class, 'x-tree-node-text')]")
+            self.logger.info("Nodos encontrados: %s", len(nodes))
+            for i, node in enumerate(nodes):
+                txt = node.text.strip() or node.get_attribute("textContent").strip()
+                self.logger.info("Nodo [%s]: '%s' (Visible: %s)", i, txt, node.is_displayed())
+        except Exception as e:
+            self.logger.warning("No se pudieron leer los nodos del árbol: %s", e)
+        # -----------------------------------------------------
+        
+        # Expandir "Payment Request"
+        try:
+            self.logger.info("Buscando 'Payment Request' para expandir...")
+            # Usamos un XPath más flexible por si el texto varía
+            payment_req_xpath = "//*[contains(@class, 'x-tree-node-text')][contains(text(), 'Payment Request')]"
+            payment_el = wait.until(ec.visibility_of_element_located((By.XPATH, payment_req_xpath)))
+            self.driver.execute_script("arguments[0].scrollIntoView(true);", payment_el)
+            self._pause(1.0)
+            
+            self.logger.info("Intentando expandir 'Payment Request'...")
+            # Intentamos primero por el icono expander si existe en la misma fila
+            try:
+                expander = payment_el.find_element(By.XPATH, "./ancestor::tr//span[contains(@class, 'x-tree-expander')]")
+                self.driver.execute_script("arguments[0].click();", expander)
+                self.logger.info("Clic en expander (+) realizado.")
+            except Exception:
+                self.logger.info("No hay expander visible, probando doble clic en el texto...")
+                actions = ActionChains(self.driver)
+                actions.move_to_element(payment_el).double_click().perform()
+            
+            self._pause(2.0)
+        except Exception as e:
+            self.logger.info("No se pudo expandir 'Payment Request': %s", e)
+
+        # Seleccionar "Non-AP15 One-time"
+        self._pause(1.0)
+        category_opt_xpath = "//*[contains(@class, 'x-tree-node-text')][contains(normalize-space(.), 'Non-AP15')]"
+        category_opt = wait.until(ec.presence_of_element_located((By.XPATH, category_opt_xpath)))
+        self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", category_opt)
+        self._pause(1.5)
+
+        self.logger.info("Intentando seleccionar 'Non-AP15'...")
+        try:
+            # Estrategia A: Buscar checkbox en la fila y darle clic
+            parent_row = category_opt.find_element(By.XPATH, "./ancestor::tr")
+            checkbox = parent_row.find_elements(By.XPATH, ".//*[contains(@class, 'x-tree-checkbox')]")
+            if checkbox:
+                self.logger.info("Clic en el checkbox detectado.")
+                self.driver.execute_script("arguments[0].click();", checkbox[0])
+            else:
+                # Estrategia B: Doble clic en el texto
+                self.logger.info("No se detectó checkbox, aplicando doble clic al texto.")
+                actions = ActionChains(self.driver)
+                actions.move_to_element(category_opt).double_click().perform()
+        except Exception as e:
+            self.logger.warning("Error en selección detallada, probando clic simple JS: %s", e)
+            self.driver.execute_script("arguments[0].click();", category_opt)
+        
+        self._pause(2.0)
+
+        # 4. Cambiar Estado
+        self.logger.info("Paso 4: Cambiando estado a Suspended...")
+        change_status_btn_xpath = "//a[@aria-label='Cambiar estado...' and @aria-hidden='false']"
+        status_btn = wait.until(ec.element_to_be_clickable((By.XPATH, change_status_btn_xpath)))
+        self.driver.execute_script("arguments[0].click();", status_btn)
+        
+        self._pause(2.0)
+        self.driver.switch_to.active_element.send_keys(Keys.ENTER)
+        self._pause(3.0)
+
+        # Dropdown dentro del modal
+        # Dropdown dentro del modal (Bucle antibloqueo ExtJS + Puppeteer)
+        self.logger.info("Abriendo dropdown de nuevo estado (usando inputEl)...")
+        start_arrow = time.time()
+        arrow_clicked = False
+        while time.time() - start_arrow < 10:
+            # CAMBIO CLAVE 1: Buscamos el inputEl real que abre la lista
+            inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[id$='_cbStatus-inputEl']")
+            visible_input = next((i for i in inputs if i.is_displayed()), None)
+            if visible_input:
+                self.driver.execute_script("arguments[0].click();", visible_input)
+                arrow_clicked = True
+                break
+            time.sleep(0.5)
+            
+        if not arrow_clicked:
+            raise TimeoutException("No se encontró la caja de texto del estado.")
+        self._pause(1.5)
+
+        self.logger.info("Seleccionando 'Suspend'...")
+        suspended_xpath = "//div[contains(@class, 'x-boundlist')]//li[contains(normalize-space(.), 'Suspend')]"
+        start_opt = time.time()
+        opt_clicked = False
+        while time.time() - start_opt < 10:
+            opts = self.driver.find_elements(By.XPATH, suspended_xpath)
+            visible_opt = next((o for o in opts if o.is_displayed()), None)
+            if visible_opt:
+                self.driver.execute_script("arguments[0].click();", visible_opt)
+                opt_clicked = True
+                break
+            time.sleep(0.5)
+            
+        if not opt_clicked:
+            raise TimeoutException("No se encontró la opción 'Suspended' visible.")
+        self._pause(1.5)
+
+        self.logger.info("Haciendo clic en 'Ejecutar'...")
+        start_exec = time.time()
+        exec_clicked = False
+        while time.time() - start_exec < 10:
+            # CAMBIO CLAVE 2: Buscamos el texto interior del botón
+            btns = self.driver.find_elements(By.CSS_SELECTOR, "[id$='_BtnOK-btnInnerEl']")
+            visible_btn = next((b for b in btns if b.is_displayed()), None)
+            if visible_btn:
+                self.driver.execute_script("arguments[0].click();", visible_btn)
+                exec_clicked = True
+                break
+            time.sleep(0.5)
+            
+        if not exec_clicked:
+            raise TimeoutException("No se encontró el botón 'Ejecutar' visible.")
+        
+        self._pause(5.0)
+        self.logger.info("Ticket %s suspendido exitosamente.", ticket_id)
+            
+        if not opt_clicked:
+            raise TimeoutException("No se encontró la opción 'Suspended' visible.")
+        self._pause(1.5)
+
+        self.logger.info("Haciendo clic en 'Ejecutar'...")
+        start_exec = time.time()
+        exec_clicked = False
+        while time.time() - start_exec < 10:
+            btns = self.driver.find_elements(By.CSS_SELECTOR, "a[id$='_BtnOK']")
+            visible_btn = next((b for b in btns if b.is_displayed()), None)
+            if visible_btn:
+                self.driver.execute_script("arguments[0].click();", visible_btn)
+                exec_clicked = True
+                break
+            time.sleep(0.5)
+            
+        if not exec_clicked:
+            raise TimeoutException("No se encontró el botón 'Ejecutar' visible.")
+        
+        self._pause(5.0)
+        self.logger.info("Ticket %s suspendido exitosamente.", ticket_id)
 
     def _collect_grid_records_from_dom(self) -> list[TicketRecord]:
         """Extrae los datos basándose en visibilidad y previene sobrescritura de IDs."""
