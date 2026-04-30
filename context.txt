@@ -1,5 +1,5 @@
 HDA Automation - Project Context
-Last updated: 2026-04-09
+Last updated: 2026-04-30
 
 Purpose
 - Windows VM automation for HDA Payment tickets.
@@ -19,7 +19,7 @@ Current high-level status
 - SMTP sending: working.
 - SAP login/TCode open/base form fill/test execution: working enough to test.
 - SAP result-table inspection/logging: working.
-- Suspending tickets in HDA: NOT implemented yet.
+- Suspending tickets in HDA: WORKING (Autoassign, Solution, Category Tree, Status Modal).
 - Process 2: NOT implemented yet.
 
 Important repo areas
@@ -312,9 +312,9 @@ Email/delivery knowledge from meeting
 - Need to avoid mixing currencies in the same final file.
 
 Suspended tickets
-- Suspension flow in HDA was NOT covered enough in the latest meeting.
-- Still pending.
-- suspend_ticket in src/hda_web/client.py is still just a stub/logger.
+- Suspension flow in HDA is now FULLY IMPLEMENTED and stable.
+- Strategy: Uses tree-expander icons and double-clicks for ExtJS navigation.
+- Implementation: suspend_ticket_ui in src/hda_web/client.py.
 
 Process 2 status
 - Not urgent yet.

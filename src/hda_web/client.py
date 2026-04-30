@@ -207,7 +207,7 @@ class HDAClient:
             otc_records = [
                 ticket for ticket in ticket_records 
                 if "onetime check" in ticket.payment_method.replace('\xa0', ' ').strip().lower()
-                and ticket.status.replace('\xa0', ' ').strip().lower() in ["open", "assigned", "suspended"]
+                and ticket.status.replace('\xa0', ' ').strip().lower() in ["open"]
             ]
             self.logger.info("OneTime Check candidates visible: %s", len(otc_records))
 

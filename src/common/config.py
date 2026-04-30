@@ -5,7 +5,14 @@ from dotenv import load_dotenv
 
 
 load_dotenv(os.path.join("config", ".env.local"))
-load_dotenv(os.path.join("config", ".env.example"))
+# Intentar cargar .env.local primero, si no existe, cargar .env
+if os.path.exists(os.path.join("config", ".env.local")):
+    load_dotenv(os.path.join("config", ".env.local"))
+else:
+    load_dotenv(os.path.join("config", ".env"))
+
+
+from src.common.settings_manager import SettingsManager
 
 
 def _get_int_env(name: str, default: int) -> int:
@@ -70,6 +77,15 @@ class Settings:
         r"C:\Program Files (x86)\SAP\FrontEnd\SAPgui\saplogon.exe",
     )
 
+    def to_dict(self) -> dict:
+        """Convierte los ajustes a un diccionario para la GUI."""
+        from dataclasses import asdict
+        return asdict(self)
+
 
 def get_settings() -> Settings:
-    return Settings()
+    """Retorna los ajustes cargados desde ENV y sobreescritos por el JSON de la APP."""
+    settings = Settings()
+    manager = SettingsManager()
+    manager.update_from_env(settings)
+    return settings

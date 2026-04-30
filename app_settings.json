@@ -1,0 +1,16 @@
+{
+    "hda_url": "https://helpdeskgbs.luxottica.com/HDAPortal_GBS/#/Page/APOperator",
+    "hda_username": "MUNOZDAE",
+    "hda_password": "EssiLux2026!",
+    "sap_username_fms": "MICHAVEZ",
+    "sap_password_fms": "Amortentia2026!",
+    "sap_username_afs": "MICHAVEZ",
+    "sap_password_afs": "Amortentia2026!",
+    "smtp_host": "smtp.office365.com",
+    "smtp_port": 587,
+    "smtp_username": "contimpro03@essilorluxottica.id",
+    "smtp_password": "Essilux2026!",
+    "mail_summary_recipient": "crkevin105@gmail.com",
+    "mail_afs_recipient": "crkevin105@gmail.com",
+    "mail_fms_recipient": "crkevin105@gmail.com"
+}

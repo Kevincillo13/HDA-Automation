@@ -403,7 +403,7 @@ def _collect_one_time_checks_with_retry(
         one_time_checks = [
             ticket for ticket in tickets 
             if "onetime check" in ticket.payment_method.replace('\xa0', ' ').strip().lower()
-            and ticket.status.replace('\xa0', ' ').strip().lower() in ["open", "assigned", "suspended"]
+            and ticket.status.replace('\xa0', ' ').strip().lower() in ["open"]
         ]
 
         empty_payment_method = len(
@@ -441,7 +441,9 @@ def _collect_one_time_checks_with_retry(
 
     return last_tickets, one_time_checks
 
-def process_all_tickets() -> None:
+import threading
+
+def process_all_tickets(abort_event: threading.Event = None) -> None:
     """
     Orquesta el proceso completo de HDA:
     1. Inicia sesión.
@@ -449,6 +451,9 @@ def process_all_tickets() -> None:
     3. Itera sobre cada ticket, lo procesa, valida y actúa.
     4. Acumula los resultados.
     """
+    if abort_event and abort_event.is_set():
+        return
+        
     start_run("process_all_tickets")
     logger = get_logger("process_all_tickets")
     settings = get_settings()
@@ -500,6 +505,10 @@ def process_all_tickets() -> None:
 
         # --- BUCLE DE PROCESAMIENTO ---
         for i, ticket_to_process in enumerate(one_time_checks, start=1):
+            if abort_event and abort_event.is_set():
+                logger.warning("Proceso abortado por el usuario durante el bucle de tickets.")
+                break
+                
             current_stage = f"processing ticket {ticket_to_process.ticket_id}"
             logger.info(
                 "--- Processing ticket %s/%s: %s ---",
@@ -598,6 +607,10 @@ def process_all_tickets() -> None:
             sap_all_suspension_reasons = {}
 
             for csv_path in candidate_csvs:
+                if abort_event and abort_event.is_set():
+                    logger.warning("Proceso abortado por el usuario durante validación SAP.")
+                    break
+                    
                 logger.info("--- Starting SAP Validation for: %s ---", Path(csv_path).name)
                 
                 # Identificar grupo y vendor desde el nombre del archivo original
@@ -674,6 +687,10 @@ def process_all_tickets() -> None:
             current_stage = "automatic suspension in HDA"
             logger.info("--- STARTING AUTOMATIC SUSPENSION FOR %s TICKETS ---", len(invalid_tickets))
             for item in invalid_tickets:
+                if abort_event and abort_event.is_set():
+                    logger.warning("Proceso abortado por el usuario durante suspensión HDA.")
+                    break
+                    
                 ticket_id = item["ticket"].ticket_id
                 reasons = item.get("errors", ["Unknown validation failure"])
                 

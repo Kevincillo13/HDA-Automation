@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EssilorLuxottica - HDA OneTime Check</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" type="image/x-icon" href="icon.ico">
+</head>
+
+<body>
+    <!-- Splash Screen -->
+    <div id="splash-screen">
+        <div class="splash-content">
+            <div class="logo-text">Essilor<span>Luxottica</span></div>
+            <div class="loader-line"></div>
+        </div>
+    </div>
+
+    <div class="sidebar" id="sidebar">
+        <div class="logo">Essilor<span>Luxottica</span></div>
+        <div class="nav-item active" id="nav-dashboard" onclick="showView('dashboard')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+            <span>Dashboard</span>
+        </div>
+        <div class="nav-item" id="nav-config" onclick="showView('config')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82 1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            <span>Configuración</span>
+        </div>
+        <div class="nav-item" id="nav-about" onclick="showView('about')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            <span>Información</span>
+        </div>
+
+        <div class="theme-toggle" onclick="toggleTheme()">
+            <div class="toggle-track">
+                <div class="toggle-thumb">
+                    <svg class="sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                    <svg class="moon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                </div>
+            </div>
+            <span>Modo Oscuro</span>
+        </div>
+        <div class="version-info">HDA Automation v1.1.0</div>
+    </div>
+
+    <div class="main-content">
+        <!-- Dashboard View -->
+        <div id="dashboard" class="view active">
+            <h1>Panel de Control</h1>
+            
+            <div class="card status-card" id="status-card" style="display: none;">
+                <div class="status-content">
+                    <div id="status-icon-container">
+                        <div class="spinner"></div>
+                    </div>
+                    <div class="status-info">
+                        <h4 id="status-title">Procesando...</h4>
+                        <p id="status-message">Iniciando motores del bot</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Estado del Sistema</h3>
+                <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                    <button id="runBtn" class="btn btn-primary" onclick="runAutomation()" style="width: 100%;">
+                        Iniciar Suspensión HDA
+                    </button>
+                </div>
+            </div>
+
+            <div class="terminal-section">
+                <div class="advanced-toggle" onclick="toggleTerminal()">
+                    <span>Ver Registro Técnico (Terminal)</span>
+                    <svg id="terminal-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+                <div id="terminal-content" class="collapsible-content">
+                    <div id="log" class="log-container">
+                        <div class="log-entry">Sistema listo. Esperando inicio...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Config View -->
+        <div id="config" class="view">
+            <h1>Configuración General</h1>
+            
+            <div class="card">
+                <h3>Portal HDA</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div style="grid-column: span 2;">
+                        <label>URL HDA</label>
+                        <input type="text" id="hda_url" placeholder="https://...">
+                    </div>
+                    <div>
+                        <label>Usuario HDA</label>
+                        <input type="text" id="hda_username">
+                    </div>
+                    <div>
+                        <label>Contraseña HDA</label>
+                        <input type="password" id="hda_password">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>SAP Credentials (FMS & AFS)</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                    <div>
+                        <label>Usuario SAP FMS</label>
+                        <input type="text" id="sap_username_fms">
+                    </div>
+                    <div>
+                        <label>Password SAP FMS</label>
+                        <input type="password" id="sap_password_fms">
+                    </div>
+                    <div>
+                        <label>Usuario SAP AFS</label>
+                        <input type="text" id="sap_username_afs">
+                    </div>
+                    <div>
+                        <label>Password SAP AFS</label>
+                        <input type="password" id="sap_password_afs">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Notificaciones (Email)</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem;">
+                    <div>
+                        <label>Usuario SMTP</label>
+                        <input type="text" id="smtp_username">
+                    </div>
+                    <div>
+                        <label>Password SMTP</label>
+                        <input type="password" id="smtp_password">
+                    </div>
+                </div>
+
+                <div class="advanced-toggle" onclick="toggleAdvancedEmail()">
+                    <span>Configuración Avanzada</span>
+                    <svg id="advanced-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                </div>
+
+                <div id="advanced-email-content" class="collapsible-content">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+                        <div style="grid-column: span 2;">
+                            <label>Servidor SMTP</label>
+                            <input type="text" id="smtp_host">
+                        </div>
+                        <div>
+                            <label>Puerto SMTP</label>
+                            <input type="number" id="smtp_port">
+                        </div>
+                        <div style="grid-column: span 2; margin-top: 1rem;">
+                            <label>Email Resumen (Summary)</label>
+                            <input type="text" id="mail_summary_recipient">
+                        </div>
+                        <div>
+                            <label>Email Destinatario AFS</label>
+                            <input type="text" id="mail_afs_recipient">
+                        </div>
+                        <div>
+                            <label>Email Destinatario FMS</label>
+                            <input type="text" id="mail_fms_recipient">
+                        </div>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" style="margin-top: 2rem; width: 100%;" onclick="saveConfig()">
+                    Guardar Todas las Configuraciones
+                </button>
+            </div>
+        </div>
+
+        <!-- About View -->
+        <div id="about" class="view">
+            <h1>Acerca de HDA Automation</h1>
+            <div class="card" style="text-align: center; padding: 3rem;">
+                <div class="logo" style="font-size: 2rem; margin-bottom: 1rem;">Essilor<span>Luxottica</span></div>
+                <p style="max-width: 600px; margin: 0 auto; line-height: 1.6; color: var(--text-muted);">
+                    Herramienta de automatización diseñada para procesar tickets de tipo OneTime Check en el portal HDA, 
+                    validar datos en SAP (FMS/AFS) y ejecutar la suspensión de tickets inválidos de forma masiva.
+                </p>
+                <div style="margin-top: 2rem; font-size: 0.85rem;">Versión 1.1.0 | 2026 EssilorLuxottica</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alert Modal -->
+    <div id="alertModal" class="modal-overlay">
+        <div class="modal-card">
+            <div id="alertIcon"></div>
+            <h3 id="alertTitle">Atención</h3>
+            <p id="alertMessage"></p>
+            <button class="btn btn-primary" onclick="closeModal('alertModal')" style="width: 100%;">Entendido</button>
+        </div>
+    </div>
+
+    <div id="toast-container" class="toast-container"></div>
+    <script src="script.js"></script>
+</body>
+</html>

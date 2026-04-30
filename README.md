@@ -41,13 +41,14 @@ Hoy el proyecto ya hace esto para el Proceso 1:
 - envio SMTP de CSVs por grupo (`FMS` / `AFS`)
 - envio SMTP del summary
 - envio SMTP de correo de error si la corrida falla
+- validacion SAP del/los CSV(s) integrada en el flujo (Test Mode)
+- suspension automatica de tickets invalidos en HDA
+- inspeccion automatica de resultados SAP y mapeo a tickets
 
 Pendiente principal:
 
-- validacion SAP del/los CSV(s) antes del envio final
-- suspension de tickets invalidos en HDA
-- integrar la validacion SAP con la depuracion de filas y regeneracion de CSV
-- implementacion del Proceso 2
+- manejo proactivo de alertas "Error inesperado" en HDA
+- implementacion del Proceso 2 (Seguimiento de correos)
 
 ## Punto de entrada
 
@@ -77,13 +78,13 @@ python -m src.sap.client
 4. Seleccion de tickets `OneTime Check`.
 5. Apertura y parseo ticket por ticket.
 6. Aplicacion de reglas de negocio y validacion local.
-7. Separacion de tickets validos e invalidos (suspendidos).
-8. Generacion de `log_summary`.
-9. Generacion de CSVs AP15.
-10. Envio de correos del summary y de los CSVs por grupo.
-
-Nota:
-la validacion SAP todavia no forma parte del flujo productivo. Ya existe la base de login y apertura de TCode, pero aun no esta integrada a `ticket_processing`.
+7. Separacion de tickets validos e invalidos (suspendidos localmente).
+8. Generacion de CSVs AP15 candidatos.
+9. Validacion SAP de cada CSV (TCode ZFIN_AP_NONPO_LUCY4).
+10. Mapeo de errores SAP -> Tickets HDA.
+11. Ejecucion de suspension automatica en HDA para tickets fallidos.
+12. Generacion de `log_summary` final.
+13. Envio de correos del summary y de los CSVs limpios por grupo.
 
 ## Reglas de negocio ya implementadas
 
@@ -191,27 +192,17 @@ Variables importantes:
 - `SAP_LANGUAGE`
 - `SAP_EXECUTABLE_PATH`
 
-## SAP
+SAP:
 
-Ya existe una base tecnica en `src/sap/client.py` para:
+Ya existe una integracion tecnica completa en `src/sap/client.py` para:
 
-- abrir SAP Logon
-- esperar el motor de scripting
-- abrir la conexion configurada
-- hacer login
-- abrir un TCode
-
-El TCode de validacion que se esta explorando ahorita es:
-
-- `ZFIN_AP_NONPO_LUCY4`
-
-Pendiente en SAP:
-
-- entender y automatizar la carga del archivo
-- capturar `Posting Date`, `Company Code` y `Separator`
-- marcar siempre `Test`
-- leer el resultado de validacion
-- mapear errores de SAP a filas/tickets
+- abrir SAP Logon y login automatico
+- abrir TCode `ZFIN_AP_NONPO_LUCY4`
+- carga automatica del archivo CSV generado
+- llenado de formulario (Posting Date, Company Code, Separator)
+- ejecucion en modo `Test` (Mandatorio)
+- lectura de la tabla de resultados e inspeccion de mensajes
+- mapeo de errores de SAP a tickets especificos de HDA para su suspension
 
 ## Programacion esperada
 
