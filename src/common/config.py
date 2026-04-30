@@ -4,12 +4,24 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 
 
-load_dotenv(os.path.join("config", ".env.local"))
-# Intentar cargar .env.local primero, si no existe, cargar .env
-if os.path.exists(os.path.join("config", ".env.local")):
-    load_dotenv(os.path.join("config", ".env.local"))
+import sys
+from pathlib import Path
+
+def get_resource_path(relative_path):
+    """Obtiene la ruta absoluta para recursos, compatible con PyInstaller."""
+    if hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS) / relative_path
+    return Path.cwd() / relative_path
+
+# Intentar cargar .env.local de forma robusta
+env_path = get_resource_path(os.path.join("config", ".env.local"))
+if env_path.exists():
+    load_dotenv(str(env_path))
 else:
-    load_dotenv(os.path.join("config", ".env"))
+    # Fallback al .env estándar
+    alt_env_path = get_resource_path(os.path.join("config", ".env"))
+    if alt_env_path.exists():
+        load_dotenv(str(alt_env_path))
 
 
 from src.common.settings_manager import SettingsManager

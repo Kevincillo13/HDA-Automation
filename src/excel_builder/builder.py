@@ -16,6 +16,14 @@ except ImportError:  # pragma: no cover - depends on Windows environment
     win32com = None  # type: ignore[assignment]
 
 
+import sys
+
+def get_resource_path(relative_path):
+    """Obtiene la ruta absoluta para recursos, compatible con PyInstaller."""
+    if hasattr(sys, '_MEIPASS'):
+        return Path(sys._MEIPASS) / relative_path
+    return Path.cwd() / relative_path
+
 class AP15Builder:
     """Genera AP15 a partir de template.xlsx y exporta CSVs desde ese layout."""
 
@@ -23,7 +31,15 @@ class AP15Builder:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         settings = get_settings()
-        self.template_path = Path(template_path or settings.template_path)
+        
+        # Intentar resolver la ruta de la plantilla de forma robusta
+        raw_path = Path(template_path or settings.template_path)
+        if raw_path.exists():
+            self.template_path = raw_path
+        else:
+            # Si no existe en la ruta directa, buscar en el paquete del EXE
+            bundled_path = get_resource_path(raw_path)
+            self.template_path = bundled_path
 
     def build(
         self,

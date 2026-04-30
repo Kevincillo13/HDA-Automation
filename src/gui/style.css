@@ -38,6 +38,8 @@ body {
     display: flex;
     min-height: 100vh;
     transition: background-color 0.3s ease;
+    user-select: text;
+    -webkit-user-select: text;
 }
 
 /* Splash Screen */
@@ -261,12 +263,16 @@ input:focus {
     font-family: 'Consolas', 'Monaco', monospace;
     font-size: 0.85rem;
     line-height: 1.6;
+    user-select: text !important;
+    -webkit-user-select: text !important;
 }
 
 .log-entry {
     margin-bottom: 4px;
     border-left: 2px solid #253141;
     padding-left: 10px;
+    user-select: text !important;
+    -webkit-user-select: text !important;
 }
 
 /* Views */

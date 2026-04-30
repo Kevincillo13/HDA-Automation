@@ -39,8 +39,14 @@ class ProcessorAPI:
     def _execute_process(self):
         try:
             process_all_tickets(abort_event=self.cancel_event)
+            # Si llega aquí sin errores, mostramos éxito
+            self.window.evaluate_js("setFinalStatus(true, 'Proceso finalizado exitosamente.')")
         except Exception as e:
+            import json
+            error_msg = json.dumps(str(e))[1:-1] # Escapa todo y quita las comillas externas
             get_logger("GUI").error(f"Error fatal en proceso: {e}")
+            # Si hay error, mostramos la tachita roja
+            self.window.evaluate_js(f"setFinalStatus(false, '{error_msg}')")
         finally:
             self.is_running = False
 

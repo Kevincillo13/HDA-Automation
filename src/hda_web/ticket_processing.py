@@ -498,10 +498,12 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
         )
 
         if not one_time_checks:
-            logger.warning(
-                "No 'OneTime Check' tickets found after retrying Payments extraction. Exiting process."
+            logger.warning("No tickets found. Sending empty summary email...")
+            _send_final_reports(
+                settings, mail_client, logger, run_id, started_at, run_output_dir, 
+                one_time_checks, valid_tickets, invalid_tickets, generated_csvs, None
             )
-            return
+            raise ValueError("No se encontraron tickets 'OneTime Check' después de 3 intentos.")
 
         # --- BUCLE DE PROCESAMIENTO ---
         for i, ticket_to_process in enumerate(one_time_checks, start=1):
@@ -682,7 +684,9 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
         else:
             logger.info("No valid tickets passed HDA validation.")
             
-        # --- NUEVO PASO: SUSPENSIÓN AUTOMÁTICA EN EL PORTAL ---
+        # --- NUEVO PASO: ACTUALIZACIÓN DE ESTADOS EN HDA ---
+        
+        # 1. Suspender Tickets Inválidos
         if invalid_tickets:
             current_stage = "automatic suspension in HDA"
             logger.info("--- STARTING AUTOMATIC SUSPENSION FOR %s TICKETS ---", len(invalid_tickets))
@@ -697,7 +701,7 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
                 try:
                     logger.info("Suspending ticket %s in HDA...", ticket_id)
                     client.open_ticket_by_id(ticket_id)
-                    client.suspend_ticket_ui(ticket_id, reasons)
+                    client.update_ticket_status_ui(ticket_id, "Suspend", reasons)
                     logger.info("Ticket %s successfully suspended.", ticket_id)
                 except Exception as susp_exc:
                     logger.error("Failed to suspend ticket %s: %s", ticket_id, susp_exc)
@@ -706,6 +710,30 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
                     client.close_active_ticket_tab()
             
             logger.info("--- AUTOMATIC SUSPENSION PROCESS COMPLETE ---")
+
+        # 2. Poner en 'In progress' los Tickets Válidos
+        if valid_tickets:
+            current_stage = "setting valid tickets to in progress"
+            logger.info("--- SETTING %s VALID TICKETS TO 'IN PROGRESS' ---", len(valid_tickets))
+            for item in valid_tickets:
+                if abort_event and abort_event.is_set():
+                    logger.warning("Proceso abortado por el usuario durante actualización HDA.")
+                    break
+                    
+                ticket_id = item["ticket"].ticket_id
+                
+                try:
+                    logger.info("Setting ticket %s to 'In progress' in HDA...", ticket_id)
+                    client.open_ticket_by_id(ticket_id)
+                    client.update_ticket_status_ui(ticket_id, "In progress")
+                    logger.info("Ticket %s now 'In progress'.", ticket_id)
+                except Exception as prog_exc:
+                    logger.error("Failed to update status for ticket %s: %s", ticket_id, prog_exc)
+                    client.take_screenshot(f"inprogress_fail_{ticket_id}")
+                finally:
+                    client.close_active_ticket_tab()
+            
+            logger.info("--- STATUS UPDATE PROCESS COMPLETE ---")
 
         # 5. Generar reporte con terminología clara
         summary_path = _write_human_summary(
@@ -720,73 +748,11 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
         )
         logger.info("Human-readable summary generated: %s", summary_path)
 
-        if settings.smtp_host and (
-            settings.mail_test_recipient
-            or settings.mail_primary_recipient
-            or settings.mail_secondary_recipient
-            or settings.mail_fms_recipient
-            or settings.mail_afs_recipient
-            or settings.mail_usd_recipient
-            or settings.mail_cad_recipient
-            or settings.mail_summary_recipient
-            or settings.mail_error_recipient
-        ):
-            current_stage = "email sending"
-            mail_groups = _group_csvs_by_mail_group(generated_csvs)
-            for mail_group, group_csvs in mail_groups.items():
-                if not group_csvs:
-                    continue
-                try:
-                    mail_result = mail_client.send_message(
-                        subject=_build_typed_email_subject(settings, started_at, f"AP15 {mail_group}"),
-                        body=_build_group_email_body(
-                            run_id=run_id,
-                            started_at=started_at,
-                            mail_group=mail_group,
-                            attachments=group_csvs,
-                        ),
-                        attachments=group_csvs,
-                        recipients=_resolve_mail_recipients(settings, mail_group),
-                    )
-                    logger.info(
-                        "%s CSV email sent | recipients=%s | bcc=%s | attachments=%s",
-                        mail_group,
-                        mail_result.recipients,
-                        mail_result.bcc,
-                        len(mail_result.attachments),
-                    )
-                except Exception as mail_exc:
-                    logger.exception("%s CSV email failed to send: %s", mail_group, mail_exc)
-
-            try:
-                ended_at = datetime.now()
-                summary_text = Path(summary_path).read_text(encoding="utf-8")
-                summary_mail_result = mail_client.send_message(
-                    subject=_build_typed_email_subject(settings, started_at, "Automation Summary"),
-                    body=_build_summary_email_body(summary_text, run_id, started_at),
-                    html_body=_build_summary_email_html(
-                        run_id=run_id,
-                        started_at=started_at,
-                        ended_at=ended_at,
-                        one_time_checks=one_time_checks,
-                        valid_results=valid_tickets,
-                        invalid_results=invalid_tickets,
-                        generated_csvs=generated_csvs,
-                    ),
-                    attachments=[],
-                    recipients=_resolve_mail_recipients(settings, "SUMMARY"),
-                )
-                logger.info(
-                    "Summary email sent | recipients=%s | bcc=%s | attachments=%s",
-                    summary_mail_result.recipients,
-                    summary_mail_result.bcc,
-                    len(summary_mail_result.attachments),
-                )
-            except Exception as mail_exc:
-                logger.exception("Summary email failed to send: %s", mail_exc)
-        else:
-            logger.info("Email sending skipped because SMTP or recipients are not configured.")
-
+        # 5. Generar y enviar reportes finales
+        _send_final_reports(
+            settings, mail_client, logger, run_id, started_at, run_output_dir, 
+            one_time_checks, valid_tickets, invalid_tickets, generated_csvs, summary_path
+        )
         logger.info("END PROCESS | status=success | run_id=%s", run_id)
 
     except KeyboardInterrupt:
@@ -794,33 +760,9 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
         raise
     except Exception as exc:
         logger.exception("An unhandled error stopped the process: %s", exc)
-        if settings.smtp_host and (
-            settings.mail_test_recipient
-            or settings.mail_primary_recipient
-            or settings.mail_secondary_recipient
-            or settings.mail_error_recipient
-        ):
-            try:
-                error_mail_result = mail_client.send_message(
-                    subject=_build_typed_email_subject(settings, started_at, "Automation FAILED"),
-                    body=_build_error_email_body(
-                        run_id=run_id,
-                        started_at=started_at,
-                        current_stage=current_stage,
-                        exc=exc,
-                        log_path=log_path,
-                    ),
-                    attachments=[log_path],
-                    recipients=_resolve_mail_recipients(settings, "ERROR"),
-                )
-                logger.info(
-                    "Failure email sent | recipients=%s | bcc=%s | attachments=%s",
-                    error_mail_result.recipients,
-                    error_mail_result.bcc,
-                    len(error_mail_result.attachments),
-                )
-            except Exception as mail_exc:
-                logger.exception("Failure email failed to send: %s", mail_exc)
+        # Si NO es el error de "0 tickets", enviamos el reporte de falla técnico
+        if "No se encontraron tickets" not in str(exc):
+            _send_error_email(settings, mail_client, logger, run_id, started_at, current_stage, exc, log_path)
         try:
             client.log_debug_state("exception")
             client.log_browser_console("exception")
@@ -834,15 +776,75 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
         raise
     finally:
         if settings.browser_keep_open and client.driver:
-            logger.info(
-                "Browser will be kept open. Press Enter to exit.",
-            )
-            try:
-                input("Press Enter to close the browser...")
-            except EOFError:
-                pass
+            logger.info("Process finished. Browser will remain open for review.")
         client.close()
 
+
+
+def _send_final_reports(settings, mail_client, logger, run_id, started_at, run_output_dir, 
+                       one_time_checks, valid_tickets, invalid_tickets, generated_csvs, summary_path):
+    """Encapsula toda la lógica de generación y envío de reportes."""
+    if not summary_path:
+        summary_path = _write_human_summary(
+            str(run_output_dir), run_id, started_at, datetime.now(),
+            one_time_checks, valid_tickets, invalid_tickets, generated_csvs
+        )
+    
+    if not settings.smtp_host:
+        logger.info("Email sending skipped because SMTP is not configured.")
+        return
+
+    # Envío de CSVs por grupo
+    mail_groups = _group_csvs_by_mail_group(generated_csvs)
+    for mail_group, group_csvs in mail_groups.items():
+        if group_csvs:
+            try:
+                mail_client.send_message(
+                    subject=_build_typed_email_subject(settings, started_at, f"AP15 {mail_group}"),
+                    body=_build_group_email_body(run_id, started_at, mail_group, group_csvs),
+                    attachments=group_csvs,
+                    recipients=_resolve_mail_recipients(settings, mail_group),
+                )
+            except Exception as e:
+                logger.error("%s CSV email failed: %s", mail_group, e)
+
+    # Envío de Summary Email (SIEMPRE)
+    try:
+        summary_text = Path(summary_path).read_text(encoding="utf-8")
+        mail_client.send_message(
+            subject=_build_typed_email_subject(settings, started_at, "Automation Summary"),
+            body=_build_summary_email_body(summary_text, run_id, started_at),
+            html_body=_build_summary_email_html(
+                run_id=run_id, started_at=started_at, ended_at=datetime.now(),
+                one_time_checks=one_time_checks, valid_results=valid_tickets,
+                invalid_results=invalid_tickets, generated_csvs=generated_csvs
+            ),
+            attachments=[],
+            recipients=_resolve_mail_recipients(settings, "SUMMARY"),
+        )
+        logger.info("Summary email sent successfully.")
+    except Exception as e:
+        logger.error("Summary email failed: %s", e)
+
+def _send_error_email(settings, mail_client, logger, run_id, started_at, current_stage, exc, log_path):
+    """Envía correo de error técnico a los grupos de ERROR y SUMMARY."""
+    try:
+        # Combinamos destinatarios de Error y Summary
+        recipients = _resolve_mail_recipients(settings, "ERROR")
+        summary_recipients = _resolve_mail_recipients(settings, "SUMMARY")
+        
+        # Unir listas sin duplicados
+        all_recipients = list(set(recipients + summary_recipients))
+
+        mail_client.send_message(
+            subject=_build_typed_email_subject(settings, started_at, "Automation FAILED"),
+            body=_build_error_email_body(run_id, started_at, current_stage, exc, log_path),
+            attachments=[log_path], # YA ESTABA, PERO ASEGURAMOS
+            recipients=all_recipients,
+        )
+        logger.info("Failure email sent to: %s", all_recipients)
+    except Exception as e:
+        logger.error("Error email failed: %s", e)
 
 if __name__ == "__main__":
     process_all_tickets()
