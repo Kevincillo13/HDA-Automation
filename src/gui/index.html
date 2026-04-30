@@ -7,7 +7,7 @@
     <title>EssilorLuxottica - HDA OneTime Check</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
     <link rel="icon" type="image/x-icon" href="icon.ico">
 </head>
@@ -21,6 +21,7 @@
         </div>
     </div>
 
+    <!-- Sidebar -->
     <div class="sidebar" id="sidebar">
         <div class="logo">Essilor<span>Luxottica</span></div>
         <div class="nav-item active" id="nav-dashboard" onclick="showView('dashboard')">
@@ -48,7 +49,9 @@
         <div class="version-info">HDA Automation v1.1.0</div>
     </div>
 
+    <!-- Main Content -->
     <div class="main-content">
+        
         <!-- Dashboard View -->
         <div id="dashboard" class="view active">
             <h1>Panel de Control</h1>
@@ -182,7 +185,7 @@
 
         <!-- About View -->
         <div id="about" class="view">
-            <h1>Acerca de HDA Automation</h1>
+            <h1>Acerca de EssilorLuxottica</h1>
             <div class="card" style="text-align: center; padding: 3rem;">
                 <div class="logo" style="font-size: 2rem; margin-bottom: 1rem;">Essilor<span>Luxottica</span></div>
                 <p style="max-width: 600px; margin: 0 auto; line-height: 1.6; color: var(--text-muted);">
@@ -194,7 +197,6 @@
         </div>
     </div>
 
-    <!-- Alert Modal -->
     <div id="alertModal" class="modal-overlay">
         <div class="modal-card">
             <div id="alertIcon"></div>

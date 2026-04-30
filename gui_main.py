@@ -11,7 +11,6 @@ from src.hda_web.ticket_processing import process_all_tickets
 def get_resource_path(relative_path):
     """Obtiene la ruta absoluta para recursos, compatible con PyInstaller."""
     if hasattr(sys, '_MEIPASS'):
-        # PyInstaller crea una carpeta temporal y guarda la ruta en _MEIPASS
         return os.path.join(sys._MEIPASS, relative_path)
     return os.path.join(os.path.abspath("."), relative_path)
 
@@ -28,13 +27,10 @@ class ProcessorAPI:
         self.window = window
 
     def run_automation(self):
-        """Método principal llamado desde JS para iniciar el bot."""
         if self.is_running:
             return {"success": False, "error": "Ya hay una ejecución en curso."}
-        
         self.is_running = True
         self.cancel_event.clear()
-        
         thread = threading.Thread(target=self._execute_process)
         thread.daemon = True
         thread.start()
@@ -49,14 +45,12 @@ class ProcessorAPI:
             self.is_running = False
 
     def get_config(self):
-        """Envía los ajustes actuales a la interfaz."""
         try:
             return get_settings().to_dict()
         except Exception as e:
             return {"error": str(e)}
 
     def save_config(self, data):
-        """Guarda nuevos ajustes desde la interfaz."""
         try:
             self.settings_manager.save_settings(data)
             return {"success": True}
@@ -65,12 +59,9 @@ class ProcessorAPI:
 
 def start_gui():
     api = ProcessorAPI()
-    
-    # Rutas compatibles con el ejecutable
     html_path = get_resource_path(os.path.join("src", "gui", "index.html"))
-    icon_path = get_resource_path(os.path.join("src", "gui", "icon.ico"))
     
-    # Crear ventana única estándar
+    # Regresamos a ventana ESTÁNDAR
     window = webview.create_window(
         'EssilorLuxottica - HDA Automation', 
         html_path, 
