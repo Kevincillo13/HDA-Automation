@@ -190,6 +190,10 @@ class HDAClient:
         ticket_records = list(discovered_records.values())
         self.logger.info("Filtered grid rows with ticket IDs: %s", len(ticket_records))
         
+        if not ticket_records:
+            self.logger.info("OneTime Check candidates visible: 0")
+            return []
+
         for index, record in enumerate(ticket_records, start=1):
             self.logger.info(
                 "Grid row %s | ticket_id=%s | status=%s | created=%s | payment_method=%s | company=%s | type=%s | subject=%s",
@@ -211,7 +215,7 @@ class HDAClient:
             ]
             self.logger.info("OneTime Check candidates visible: %s", len(otc_records))
 
-            return otc_records
+            return ticket_records
 
     def open_ticket_by_id(self, ticket_id: str) -> None:
         """Abre un ticket desde el grid con varias estrategias."""
