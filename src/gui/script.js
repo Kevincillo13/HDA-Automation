@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
+    startRuntimePolling();
     
     // Timeout para la Splash Screen
     setTimeout(() => {
@@ -42,12 +43,16 @@ function addLog(message) {
     const entry = document.createElement('div');
     entry.className = 'log-entry';
     
-    const now = new Date();
-    const timestamp = now.getHours().toString().padStart(2, '0') + ':' + 
-                      now.getMinutes().toString().padStart(2, '0') + ':' + 
-                      now.getSeconds().toString().padStart(2, '0');
-                      
-    entry.innerHTML = `<span style="color: var(--secondary-color)">[${timestamp}]</span> ${message}`;
+    const hasBackendTimestamp = /^\d{2}:\d{2}:\d{2}\s+\|/.test(message);
+    if (hasBackendTimestamp) {
+        entry.textContent = message;
+    } else {
+        const now = new Date();
+        const timestamp = now.getHours().toString().padStart(2, '0') + ':' + 
+                          now.getMinutes().toString().padStart(2, '0') + ':' + 
+                          now.getSeconds().toString().padStart(2, '0');
+        entry.innerHTML = `<span style="color: var(--secondary-color)">[${timestamp}]</span> ${message}`;
+    }
     logContainer.appendChild(entry);
     logContainer.scrollTop = logContainer.scrollHeight;
 
@@ -70,7 +75,7 @@ function updateStatusFromLog(msg) {
     if (msg.includes("Summary email sent")) statusMsg.innerText = "Enviando reportes por correo...";
 
     if (msg.includes("END PROCESS")) {
-        const isSuccess = msg.includes("status=success");
+        const isSuccess = msg.includes("status=success") || msg.includes("status=empty");
         setFinalStatus(isSuccess, isSuccess ? "Todas las tareas se realizaron con éxito." : "El proceso terminó con advertencias o errores.");
     }
 }
@@ -120,16 +125,47 @@ function setFinalStatus(success, message) {
     msg.innerText = message;
 }
 
+let runtimePollHandle = null;
+
+function startRuntimePolling() {
+    if (runtimePollHandle !== null) return;
+    runtimePollHandle = setInterval(fetchRuntimeUpdates, 700);
+}
+
+function syncRunButton(isRunning) {
+    const btn = document.getElementById('runBtn');
+    if (!btn) return;
+
+    btn.disabled = !!isRunning;
+    btn.innerText = isRunning ? 'Ejecutando...' : 'Iniciar Suspensión HDA';
+}
+
+async function fetchRuntimeUpdates() {
+    if (!window.pywebview || !pywebview.api || !pywebview.api.get_runtime_updates) return;
+
+    try {
+        const updates = await pywebview.api.get_runtime_updates();
+        if (!updates) return;
+
+        (updates.logs || []).forEach(addLog);
+        syncRunButton(updates.is_running);
+
+        if (updates.final_status && !updates.is_running) {
+            setFinalStatus(!!updates.final_status.success, updates.final_status.message || '');
+        }
+    } catch (e) {
+        console.error('Error obteniendo updates de runtime:', e);
+    }
+}
+
 // API de Comunicación con Python (pywebview)
 async function runAutomation() {
-    const btn = document.getElementById('runBtn');
     const statusCard = document.getElementById('status-card');
     const iconContainer = document.getElementById('status-icon-container');
     const title = document.getElementById('status-title');
     const msg = document.getElementById('status-message');
     
-    btn.disabled = true;
-    btn.innerText = 'Ejecutando...';
+    syncRunButton(true);
     
     // Reset Status Card
     statusCard.style.display = 'block';
@@ -147,12 +183,11 @@ async function runAutomation() {
             // Pero por si acaso, si el bridge retorna algo inmediato:
         } else {
             setFinalStatus(false, result.error);
+            syncRunButton(false);
         }
     } catch (e) {
         setFinalStatus(false, "Error de comunicación: " + e);
-    } finally {
-        btn.disabled = false;
-        btn.innerText = 'Iniciar Suspensión HDA';
+        syncRunButton(false);
     }
 }
 
