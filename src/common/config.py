@@ -65,7 +65,7 @@ class Settings:
     mail_summary_recipient: str = os.getenv("MAIL_SUMMARY_RECIPIENT", "")
     mail_error_recipient: str = os.getenv("MAIL_ERROR_RECIPIENT", "")
     mail_bcc_recipient: str = os.getenv("MAIL_BCC_RECIPIENT", "")
-    mail_subject_prefix: str = os.getenv("MAIL_SUBJECT_PREFIX", "[TEST]")
+    mail_subject_prefix: str = os.getenv("MAIL_SUBJECT_PREFIX", "[HDA BOT]")
     smtp_host: str = os.getenv("SMTP_HOST", "")
     smtp_port: int = _get_int_env("SMTP_PORT", 0)
     smtp_username: str = os.getenv("SMTP_USERNAME", "")
