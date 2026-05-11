@@ -418,12 +418,21 @@ class HDAClient:
         self._pause(1.5)
 
         self.logger.info("Buscando opción '%s'...", target_status)
-        status_option_xpath = f"//div[contains(@class, 'x-boundlist')]//li[contains(normalize-space(.), '{target_status}')]"
         start_opt = time.time()
         opt_clicked = False
+        normalized_target = " ".join(target_status.split()).casefold()
+        visible_option_texts: list[str] = []
         while time.time() - start_opt < 10:
-            opts = self.driver.find_elements(By.XPATH, status_option_xpath)
-            visible_opt = next((o for o in opts if o.is_displayed()), None)
+            opts = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'x-boundlist')]//li")
+            visible_opts = [o for o in opts if o.is_displayed()]
+            visible_option_texts = [o.text.strip() for o in visible_opts if o.text.strip()]
+            visible_opt = next(
+                (
+                    o for o in visible_opts
+                    if " ".join(o.text.split()).casefold() == normalized_target
+                ),
+                None,
+            )
             if visible_opt:
                 self.driver.execute_script("arguments[0].click();", visible_opt)
                 opt_clicked = True
@@ -431,6 +440,10 @@ class HDAClient:
             time.sleep(0.5)
             
         if not opt_clicked:
+            self.logger.warning(
+                "Opciones visibles en cambio de estado: %s",
+                visible_option_texts,
+            )
             raise TimeoutException(f"No se encontró la opción '{target_status}' visible.")
         self._pause(1.5)
 

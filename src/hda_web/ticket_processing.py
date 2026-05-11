@@ -336,7 +336,7 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
             for item in valid_tickets:
                 try:
                     client.open_ticket_by_id(item["ticket"].ticket_id)
-                    client.update_ticket_status_ui(item["ticket"].ticket_id, "In progress")
+                    client.update_ticket_status_ui(item["ticket"].ticket_id, "In Progress")
                 finally: client.close_active_ticket_tab()
 
         current_stage = "reporting"
