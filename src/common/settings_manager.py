@@ -1,14 +1,21 @@
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict
+
+
+def _get_settings_base_dir() -> Path:
+    """Resuelve la carpeta base donde viven los archivos externos de configuración."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
 
 class SettingsManager:
     """Maneja la persistencia de la configuración del usuario en un archivo JSON."""
     
     def __init__(self, settings_file: str = "app_settings.json"):
-        # Guardamos en la raíz del proyecto por ahora
-        self.settings_path = Path(settings_file)
+        self.settings_path = _get_settings_base_dir() / settings_file
 
     def load_settings(self) -> Dict[str, Any]:
         """Carga los ajustes desde el archivo JSON si existe."""

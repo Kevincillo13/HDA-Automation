@@ -8,20 +8,37 @@ import sys
 from pathlib import Path
 
 def get_resource_path(relative_path):
-    """Obtiene la ruta absoluta para recursos, compatible con PyInstaller."""
+    """Obtiene la ruta absoluta para recursos empaquetados, compatible con PyInstaller."""
     if hasattr(sys, '_MEIPASS'):
         return Path(sys._MEIPASS) / relative_path
     return Path.cwd() / relative_path
 
-# Intentar cargar .env.local de forma robusta
-env_path = get_resource_path(os.path.join("config", ".env.local"))
-if env_path.exists():
-    load_dotenv(str(env_path))
-else:
-    # Fallback al .env estándar
-    alt_env_path = get_resource_path(os.path.join("config", ".env"))
-    if alt_env_path.exists():
-        load_dotenv(str(alt_env_path))
+
+def get_app_base_dir() -> Path:
+    """Resuelve la carpeta externa de la app: junto al exe cuando está congelada."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
+
+
+def load_external_env() -> None:
+    """Carga .env externos priorizando archivos junto al exe/proyecto."""
+    base_dir = get_app_base_dir()
+    candidates = [
+        base_dir / ".env.local",
+        base_dir / ".env",
+        base_dir / "config" / ".env.local",
+        base_dir / "config" / ".env",
+        get_resource_path(os.path.join("config", ".env.local")),
+        get_resource_path(os.path.join("config", ".env")),
+    ]
+
+    for env_candidate in candidates:
+        if env_candidate.exists():
+            load_dotenv(str(env_candidate), override=False)
+            break
+
+load_external_env()
 
 
 from src.common.settings_manager import SettingsManager
