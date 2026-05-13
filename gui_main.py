@@ -3,6 +3,7 @@ import smtplib
 import threading
 import time
 import tkinter as tk
+import ctypes
 from pathlib import Path
 from tkinter import messagebox
 from tkinter.scrolledtext import ScrolledText
@@ -24,6 +25,10 @@ def get_resource_path(relative_path: str) -> Path:
 
 
 class AutomationApp:
+    ES_CONTINUOUS = 0x80000000
+    ES_SYSTEM_REQUIRED = 0x00000001
+    ES_DISPLAY_REQUIRED = 0x00000002
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("EssilorLuxottica - HDA Automation")
@@ -64,8 +69,26 @@ class AutomationApp:
         self.root.after(200, self._flush_logs)
 
     def _build_ui(self) -> None:
-        outer = tk.Frame(self.root, bg=self.colors["bg"], padx=18, pady=18)
-        outer.pack(fill="both", expand=True)
+        shell = tk.Frame(self.root, bg=self.colors["bg"])
+        shell.pack(fill="both", expand=True)
+
+        self.main_canvas = tk.Canvas(
+            shell,
+            bg=self.colors["bg"],
+            highlightthickness=0,
+            bd=0,
+        )
+        scrollbar = tk.Scrollbar(shell, orient="vertical", command=self.main_canvas.yview)
+        self.main_canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollbar.pack(side="right", fill="y")
+        self.main_canvas.pack(side="left", fill="both", expand=True)
+
+        outer = tk.Frame(self.main_canvas, bg=self.colors["bg"], padx=18, pady=18)
+        self.main_canvas_window = self.main_canvas.create_window((0, 0), window=outer, anchor="nw")
+        outer.bind("<Configure>", self._on_content_configure)
+        self.main_canvas.bind("<Configure>", self._on_canvas_configure)
+        self._bind_mousewheel(self.main_canvas)
 
         self._build_header(outer)
 
@@ -93,72 +116,37 @@ class AutomationApp:
         form = tk.Frame(form_card, bg=self.colors["card"])
         form.pack(fill="x")
 
-        rows = [
-            ("Usuario HDA", "hda_username", False),
-            ("Contraseña HDA", "hda_password", True),
-            ("Usuario SAP", "sap_username", False),
-            ("Contraseña SAP", "sap_password", True),
-            ("Usuario correo", "smtp_username", False),
-            ("Contraseña correo", "smtp_password", True),
-            ("Correo Summary", "mail_summary_recipient", False),
-            ("Correo FMS", "mail_fms_recipient", False),
-            ("Correo AFS", "mail_afs_recipient", False),
-        ]
-
-        for index, (label, key, secret) in enumerate(rows):
-            tk.Label(
-                form,
-                text=label,
-                bg=self.colors["card"],
-                fg=self.colors["navy"],
-                font=("Segoe UI", 10, "bold"),
-            ).grid(row=index, column=0, sticky="w", padx=(0, 16), pady=8)
-
-            variable = tk.StringVar()
-            field_container = tk.Frame(form, bg=self.colors["card"])
-            field_container.grid(row=index, column=1, sticky="ew", pady=8)
-
-            entry = tk.Entry(
-                field_container,
-                textvariable=variable,
-                width=56,
-                show="*" if secret else "",
-                relief="flat",
-                bd=0,
-                highlightthickness=1,
-                highlightbackground=self.colors["border"],
-                highlightcolor=self.colors["blue"],
-                bg=self.colors["input_bg"],
-                fg="#102033",
-                insertbackground="#102033",
-                font=("Segoe UI", 10),
-            )
-            entry.pack(side="left", fill="x", expand=True, ipady=8)
-            self.fields[key] = variable
-            self.field_widgets.append(entry)
-
-            if secret:
-                toggle_button = tk.Button(
-                    field_container,
-                    text="Ver",
-                    command=lambda field_key=key: self._toggle_secret_visibility(field_key),
-                    relief="flat",
-                    bd=0,
-                    padx=12,
-                    pady=8,
-                    bg="#e7eef5",
-                    fg=self.colors["navy"],
-                    activebackground="#d8e4f0",
-                    activeforeground=self.colors["navy"],
-                    font=("Segoe UI", 9, "bold"),
-                    cursor="hand2",
-                )
-                toggle_button.pack(side="left", padx=(8, 0))
-                self.secret_entries[key] = entry
-                self.secret_toggle_buttons[key] = toggle_button
-                self.field_widgets.append(toggle_button)
-
+        form.columnconfigure(0, weight=1)
         form.columnconfigure(1, weight=1)
+
+        left_col = tk.Frame(form, bg=self.colors["card"])
+        right_col = tk.Frame(form, bg=self.colors["card"])
+        left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        right_col.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+
+        self._build_form_column(
+            left_col,
+            [
+                ("Usuario HDA", "hda_username", False),
+                ("Contrasena HDA", "hda_password", True),
+                ("Usuario SAP FMS", "sap_username_fms", False),
+                ("Contrasena SAP FMS", "sap_password_fms", True),
+                ("Sap connection name FMS", "sap_connection_name_fms", False),
+                ("Usuario SAP AFS", "sap_username_afs", False),
+                ("Contrasena SAP AFS", "sap_password_afs", True),
+                ("Sap connection name AFS", "sap_connection_name_afs", False),
+            ],
+        )
+        self._build_form_column(
+            right_col,
+            [
+                ("Usuario correo", "smtp_username", False),
+                ("Contrasena correo", "smtp_password", True),
+                ("Correo Summary", "mail_summary_recipient", False),
+                ("Correo FMS", "mail_fms_recipient", False),
+                ("Correo AFS", "mail_afs_recipient", False),
+            ],
+        )
 
         button_row = tk.Frame(content, bg=self.colors["bg"])
         button_row.pack(fill="x", pady=(14, 12))
@@ -238,6 +226,18 @@ class AutomationApp:
         self.log_text.pack(fill="both", expand=True)
         self.log_text.configure(state="disabled")
 
+    def _on_content_configure(self, _event: tk.Event) -> None:
+        self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        self.main_canvas.itemconfigure(self.main_canvas_window, width=event.width)
+
+    def _bind_mousewheel(self, widget: tk.Widget) -> None:
+        widget.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        self.main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
     def _build_header(self, parent: tk.Widget) -> None:
         header = tk.Frame(parent, bg=self.colors["navy"], height=138, padx=22, pady=20)
         header.pack(fill="x")
@@ -303,6 +303,66 @@ class AutomationApp:
             state=state,
         )
 
+    def _build_form_column(
+        self,
+        parent: tk.Widget,
+        rows: list[tuple[str, str, bool]],
+    ) -> None:
+        parent.columnconfigure(0, weight=1)
+        for index, (label, key, secret) in enumerate(rows):
+            tk.Label(
+                parent,
+                text=label,
+                bg=self.colors["card"],
+                fg=self.colors["navy"],
+                font=("Segoe UI", 10, "bold"),
+            ).grid(row=index * 2, column=0, sticky="w", pady=(0, 6))
+
+            variable = tk.StringVar()
+            field_container = tk.Frame(parent, bg=self.colors["card"])
+            field_container.grid(row=index * 2 + 1, column=0, sticky="ew", pady=(0, 12))
+            field_container.columnconfigure(0, weight=1)
+
+            entry = tk.Entry(
+                field_container,
+                textvariable=variable,
+                width=32,
+                show="*" if secret else "",
+                relief="flat",
+                bd=0,
+                highlightthickness=1,
+                highlightbackground=self.colors["border"],
+                highlightcolor=self.colors["blue"],
+                bg=self.colors["input_bg"],
+                fg="#102033",
+                insertbackground="#102033",
+                font=("Segoe UI", 10),
+            )
+            entry.grid(row=0, column=0, sticky="ew", ipady=8)
+            self.fields[key] = variable
+            self.field_widgets.append(entry)
+
+            if secret:
+                toggle_button = tk.Button(
+                    field_container,
+                    text="Ver",
+                    command=lambda field_key=key: self._toggle_secret_visibility(field_key),
+                    relief="flat",
+                    bd=0,
+                    padx=12,
+                    pady=8,
+                    bg="#e7eef5",
+                    fg=self.colors["navy"],
+                    activebackground="#d8e4f0",
+                    activeforeground=self.colors["navy"],
+                    font=("Segoe UI", 9, "bold"),
+                    cursor="hand2",
+                )
+                toggle_button.grid(row=0, column=1, padx=(8, 0))
+                self.secret_entries[key] = entry
+                self.secret_toggle_buttons[key] = toggle_button
+                self.field_widgets.append(toggle_button)
+
     def _toggle_secret_visibility(self, key: str) -> None:
         entry = self.secret_entries.get(key)
         button = self.secret_toggle_buttons.get(key)
@@ -317,8 +377,12 @@ class AutomationApp:
         settings = get_settings()
         self.fields["hda_username"].set(settings.hda_username)
         self.fields["hda_password"].set(settings.hda_password)
-        self.fields["sap_username"].set(settings.sap_username_fms or settings.sap_username_afs)
-        self.fields["sap_password"].set(settings.sap_password_fms or settings.sap_password_afs)
+        self.fields["sap_username_fms"].set(settings.sap_username_fms)
+        self.fields["sap_password_fms"].set(settings.sap_password_fms)
+        self.fields["sap_connection_name_fms"].set(settings.sap_connection_name_fms)
+        self.fields["sap_username_afs"].set(settings.sap_username_afs)
+        self.fields["sap_password_afs"].set(settings.sap_password_afs)
+        self.fields["sap_connection_name_afs"].set(settings.sap_connection_name_afs)
         self.fields["smtp_username"].set(settings.smtp_username)
         self.fields["smtp_password"].set(settings.smtp_password)
         self.fields["mail_summary_recipient"].set(settings.mail_summary_recipient)
@@ -327,17 +391,23 @@ class AutomationApp:
 
     def _compose_settings_payload(self) -> dict:
         current = get_settings().to_dict()
-        sap_username = self.fields["sap_username"].get().strip()
-        sap_password = self.fields["sap_password"].get().strip()
+        sap_username_fms = self.fields["sap_username_fms"].get().strip()
+        sap_password_fms = self.fields["sap_password_fms"].get().strip()
+        sap_connection_name_fms = self.fields["sap_connection_name_fms"].get().strip()
+        sap_username_afs = self.fields["sap_username_afs"].get().strip()
+        sap_password_afs = self.fields["sap_password_afs"].get().strip()
+        sap_connection_name_afs = self.fields["sap_connection_name_afs"].get().strip()
 
         current.update(
             {
                 "hda_username": self.fields["hda_username"].get().strip(),
                 "hda_password": self.fields["hda_password"].get().strip(),
-                "sap_username_fms": sap_username,
-                "sap_username_afs": sap_username,
-                "sap_password_fms": sap_password,
-                "sap_password_afs": sap_password,
+                "sap_username_fms": sap_username_fms,
+                "sap_username_afs": sap_username_afs,
+                "sap_password_fms": sap_password_fms,
+                "sap_password_afs": sap_password_afs,
+                "sap_connection_name_fms": sap_connection_name_fms,
+                "sap_connection_name_afs": sap_connection_name_afs,
                 "smtp_username": self.fields["smtp_username"].get().strip(),
                 "smtp_password": self.fields["smtp_password"].get().strip(),
                 "smtp_sender": self.fields["smtp_username"].get().strip(),
@@ -386,6 +456,7 @@ class AutomationApp:
 
     def _worker_main(self) -> None:
         pythoncom.CoInitialize()
+        self._prevent_sleep()
         try:
             process_all_tickets(abort_event=self.cancel_event)
             if self.cancel_event.is_set():
@@ -395,6 +466,7 @@ class AutomationApp:
         except Exception as exc:
             self.enqueue_log(f"ERROR: {exc}")
         finally:
+            self._allow_sleep()
             pythoncom.CoUninitialize()
             self.root.after(0, lambda: self._set_running_state(False))
 
@@ -488,6 +560,22 @@ class AutomationApp:
         if "prod.outlook.com" in normalized and "credential" in normalized:
             return "Correo/SMTP rechazo la autenticacion. Revisa Usuario correo y Contrasena correo."
         return message
+
+    def _prevent_sleep(self) -> None:
+        try:
+            ctypes.windll.kernel32.SetThreadExecutionState(
+                self.ES_CONTINUOUS | self.ES_SYSTEM_REQUIRED | self.ES_DISPLAY_REQUIRED
+            )
+            self.enqueue_log("Modo activo: Windows no entrara en suspension durante la ejecucion.")
+        except Exception as exc:
+            self.enqueue_log(f"ADVERTENCIA: No se pudo bloquear la suspension del equipo: {exc}")
+
+    def _allow_sleep(self) -> None:
+        try:
+            ctypes.windll.kernel32.SetThreadExecutionState(self.ES_CONTINUOUS)
+            self.enqueue_log("Modo activo liberado: Windows puede volver a usar su configuracion normal de energia.")
+        except Exception as exc:
+            self.enqueue_log(f"ADVERTENCIA: No se pudo restaurar el estado de energia normal: {exc}")
 
     def enqueue_log(self, message: str) -> None:
         if message:
