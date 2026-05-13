@@ -1,156 +1,421 @@
-import os
 import queue
-import sys
 import threading
 import time
+import tkinter as tk
+from pathlib import Path
+from tkinter import messagebox
+from tkinter.scrolledtext import ScrolledText
 
-import webview
+import pythoncom
 
 from src.common.config import get_settings
-from src.common.logger import add_gui_callback, get_logger
+from src.common.logger import add_gui_callback
 from src.common.settings_manager import SettingsManager
 from src.common.system import kill_processes
 from src.hda_web.ticket_processing import process_all_tickets
 
 
-def get_resource_path(relative_path):
-    """Obtiene la ruta absoluta para recursos, compatible con PyInstaller."""
-    if hasattr(sys, "_MEIPASS"):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
+def get_resource_path(relative_path: str) -> Path:
+    return Path(__file__).resolve().parent / relative_path
 
 
-class ProcessorAPI:
-    """API expuesta a JavaScript para controlar la automatización."""
+class AutomationApp:
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        self.root.title("EssilorLuxottica - HDA Automation")
+        self.root.geometry("920x780")
+        self.root.minsize(860, 700)
 
-    def __init__(self):
-        self.cancel_event = threading.Event()
-        self.is_running = False
-        self.window = None
+        self.colors = {
+            "bg": "#edf3f8",
+            "navy": "#102945",
+            "blue": "#1d5ea8",
+            "cyan": "#00a7c4",
+            "gold": "#d39d3c",
+            "card": "#ffffff",
+            "muted": "#627387",
+            "border": "#d6e0ea",
+            "log_bg": "#112032",
+            "log_fg": "#edf6ff",
+            "input_bg": "#f9fbfd",
+        }
+
+        self.root.configure(bg=self.colors["bg"])
         self.settings_manager = SettingsManager()
-        self.worker_thread: threading.Thread | None = None
         self.log_queue: queue.Queue[str] = queue.Queue()
-        self.state_lock = threading.Lock()
-        self.final_status: dict[str, str | bool] | None = None
-        self.shutdown_started = threading.Event()
+        self.cancel_event = threading.Event()
+        self.worker_thread: threading.Thread | None = None
+        self.is_running = False
+        self.fields: dict[str, tk.StringVar] = {}
+        self.field_widgets: list[tk.Entry] = []
 
-    def set_window(self, window):
-        self.window = window
+        self._build_ui()
+        self._load_saved_values()
 
-    def enqueue_log(self, message: str):
-        if message:
-            self.log_queue.put(str(message))
+        add_gui_callback(self.enqueue_log)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(200, self._flush_logs)
 
-    def run_automation(self):
-        with self.state_lock:
-            if self.is_running:
-                return {"success": False, "error": "Ya hay una ejecución en curso."}
-            self.is_running = True
-            self.final_status = None
-            self.cancel_event.clear()
+    def _build_ui(self) -> None:
+        outer = tk.Frame(self.root, bg=self.colors["bg"], padx=18, pady=18)
+        outer.pack(fill="both", expand=True)
 
-        self.enqueue_log("Iniciando proceso principal...")
-        thread = threading.Thread(target=self._execute_process, name="automation-worker", daemon=True)
-        self.worker_thread = thread
-        thread.start()
-        return {"success": True}
+        self._build_header(outer)
 
-    def _execute_process(self):
+        content = tk.Frame(outer, bg=self.colors["bg"])
+        content.pack(fill="both", expand=True, pady=(18, 0))
+
+        form_card = self._make_card(content)
+        form_card.pack(fill="x")
+
+        tk.Label(
+            form_card,
+            text="Configuración rápida",
+            bg=self.colors["card"],
+            fg=self.colors["navy"],
+            font=("Segoe UI", 15, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            form_card,
+            text="Guarda credenciales y corre la automatización con una interfaz ligera y estable.",
+            bg=self.colors["card"],
+            fg=self.colors["muted"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=(4, 16))
+
+        form = tk.Frame(form_card, bg=self.colors["card"])
+        form.pack(fill="x")
+
+        rows = [
+            ("Usuario HDA", "hda_username", False),
+            ("Contraseña HDA", "hda_password", True),
+            ("Usuario SAP", "sap_username", False),
+            ("Contraseña SAP", "sap_password", True),
+            ("Usuario correo", "smtp_username", False),
+            ("Contraseña correo", "smtp_password", True),
+            ("Correo Summary", "mail_summary_recipient", False),
+            ("Correo FMS", "mail_fms_recipient", False),
+            ("Correo AFS", "mail_afs_recipient", False),
+        ]
+
+        for index, (label, key, secret) in enumerate(rows):
+            tk.Label(
+                form,
+                text=label,
+                bg=self.colors["card"],
+                fg=self.colors["navy"],
+                font=("Segoe UI", 10, "bold"),
+            ).grid(row=index, column=0, sticky="w", padx=(0, 16), pady=8)
+
+            variable = tk.StringVar()
+            entry = tk.Entry(
+                form,
+                textvariable=variable,
+                width=56,
+                show="*" if secret else "",
+                relief="flat",
+                bd=0,
+                highlightthickness=1,
+                highlightbackground=self.colors["border"],
+                highlightcolor=self.colors["blue"],
+                bg=self.colors["input_bg"],
+                fg="#102033",
+                insertbackground="#102033",
+                font=("Segoe UI", 10),
+            )
+            entry.grid(row=index, column=1, sticky="ew", pady=8, ipady=8)
+            self.fields[key] = variable
+            self.field_widgets.append(entry)
+
+        form.columnconfigure(1, weight=1)
+
+        button_row = tk.Frame(content, bg=self.colors["bg"])
+        button_row.pack(fill="x", pady=(14, 12))
+
+        self.save_button = self._make_button(
+            button_row,
+            text="Guardar",
+            command=self.save_settings,
+            bg=self.colors["card"],
+            fg=self.colors["navy"],
+            active_bg="#e7eef5",
+        )
+        self.save_button.pack(side="left")
+
+        self.run_button = self._make_button(
+            button_row,
+            text="Correr Automatización",
+            command=self.run_automation,
+            bg=self.colors["blue"],
+            fg="#ffffff",
+            active_bg="#154d8a",
+        )
+        self.run_button.pack(side="left", padx=(8, 0))
+
+        self.stop_button = self._make_button(
+            button_row,
+            text="Detener",
+            command=self.request_stop,
+            bg=self.colors["gold"],
+            fg="#ffffff",
+            active_bg="#b9882f",
+            state="disabled",
+        )
+        self.stop_button.pack(side="left", padx=(8, 0))
+
+        log_card = self._make_card(content)
+        log_card.pack(fill="both", expand=True)
+
+        tk.Label(
+            log_card,
+            text="EssilorLuxottica Activity Log",
+            bg=self.colors["card"],
+            fg=self.colors["navy"],
+            font=("Segoe UI", 13, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            log_card,
+            text="Seguimiento en vivo de la ejecución de HDA, SAP y envío de reportes.",
+            bg=self.colors["card"],
+            fg=self.colors["muted"],
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", pady=(4, 12))
+
+        self.log_text = ScrolledText(
+            log_card,
+            height=24,
+            wrap="word",
+            font=("Consolas", 9),
+            bg=self.colors["log_bg"],
+            fg=self.colors["log_fg"],
+            insertbackground=self.colors["log_fg"],
+            relief="flat",
+            bd=0,
+            padx=12,
+            pady=12,
+        )
+        self.log_text.pack(fill="both", expand=True)
+        self.log_text.configure(state="disabled")
+
+    def _build_header(self, parent: tk.Widget) -> None:
+        header = tk.Frame(parent, bg=self.colors["navy"], height=138, padx=22, pady=20)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        accent = tk.Frame(header, bg=self.colors["cyan"], width=10)
+        accent.pack(side="left", fill="y")
+
+        content = tk.Frame(header, bg=self.colors["navy"], padx=18)
+        content.pack(side="left", fill="both", expand=True)
+
+        tk.Label(
+            content,
+            text="EssilorLuxottica",
+            bg=self.colors["navy"],
+            fg="#ffffff",
+            font=("Segoe UI", 22, "bold"),
+        ).pack(anchor="w")
+        tk.Label(
+            content,
+            text="HDA Automation Console",
+            bg=self.colors["navy"],
+            fg="#d5e6f6",
+            font=("Segoe UI", 13),
+        ).pack(anchor="w", pady=(4, 0))
+
+    def _make_card(self, parent: tk.Widget) -> tk.Frame:
+        return tk.Frame(
+            parent,
+            bg=self.colors["card"],
+            highlightbackground=self.colors["border"],
+            highlightthickness=1,
+            bd=0,
+            padx=18,
+            pady=18,
+        )
+
+    def _make_button(
+        self,
+        parent: tk.Widget,
+        text: str,
+        command,
+        bg: str,
+        fg: str,
+        active_bg: str,
+        state: str = "normal",
+    ) -> tk.Button:
+        return tk.Button(
+            parent,
+            text=text,
+            command=command,
+            bg=bg,
+            fg=fg,
+            activebackground=active_bg,
+            activeforeground=fg,
+            disabledforeground="#dce3ea",
+            relief="flat",
+            bd=0,
+            padx=18,
+            pady=10,
+            font=("Segoe UI", 10, "bold"),
+            cursor="hand2" if state == "normal" else "arrow",
+            state=state,
+        )
+
+    def _load_saved_values(self) -> None:
+        settings = get_settings()
+        self.fields["hda_username"].set(settings.hda_username)
+        self.fields["hda_password"].set(settings.hda_password)
+        self.fields["sap_username"].set(settings.sap_username_fms or settings.sap_username_afs)
+        self.fields["sap_password"].set(settings.sap_password_fms or settings.sap_password_afs)
+        self.fields["smtp_username"].set(settings.smtp_username)
+        self.fields["smtp_password"].set(settings.smtp_password)
+        self.fields["mail_summary_recipient"].set(settings.mail_summary_recipient)
+        self.fields["mail_fms_recipient"].set(settings.mail_fms_recipient or settings.mail_usd_recipient)
+        self.fields["mail_afs_recipient"].set(settings.mail_afs_recipient or settings.mail_cad_recipient)
+
+    def _compose_settings_payload(self) -> dict:
+        current = get_settings().to_dict()
+        sap_username = self.fields["sap_username"].get().strip()
+        sap_password = self.fields["sap_password"].get().strip()
+
+        current.update(
+            {
+                "hda_username": self.fields["hda_username"].get().strip(),
+                "hda_password": self.fields["hda_password"].get().strip(),
+                "sap_username_fms": sap_username,
+                "sap_username_afs": sap_username,
+                "sap_password_fms": sap_password,
+                "sap_password_afs": sap_password,
+                "smtp_username": self.fields["smtp_username"].get().strip(),
+                "smtp_password": self.fields["smtp_password"].get().strip(),
+                "smtp_sender": self.fields["smtp_username"].get().strip(),
+                "mail_summary_recipient": self.fields["mail_summary_recipient"].get().strip(),
+                "mail_fms_recipient": self.fields["mail_fms_recipient"].get().strip(),
+                "mail_afs_recipient": self.fields["mail_afs_recipient"].get().strip(),
+                "mail_test_recipient": "",
+                "mail_usd_recipient": self.fields["mail_fms_recipient"].get().strip(),
+                "mail_cad_recipient": self.fields["mail_afs_recipient"].get().strip(),
+            }
+        )
+        return current
+
+    def save_settings(self, notify: bool = True) -> bool:
+        try:
+            payload = self._compose_settings_payload()
+            self.settings_manager.save_settings(payload)
+            if notify:
+                messagebox.showinfo("Guardado", "La configuración quedó guardada.")
+            return True
+        except Exception as exc:
+            messagebox.showerror("Error", f"No se pudo guardar la configuración.\n\n{exc}")
+            return False
+
+    def run_automation(self) -> None:
+        if self.is_running:
+            return
+
+        if not self.save_settings(notify=False):
+            return
+
+        self.is_running = True
+        self.cancel_event.clear()
+        self._set_running_state(True)
+        self.enqueue_log("Iniciando automatización...")
+
+        self.worker_thread = threading.Thread(
+            target=self._worker_main,
+            name="automation-worker",
+            daemon=True,
+        )
+        self.worker_thread.start()
+
+    def _worker_main(self) -> None:
+        pythoncom.CoInitialize()
         try:
             process_all_tickets(abort_event=self.cancel_event)
             if self.cancel_event.is_set():
-                self.final_status = {
-                    "success": False,
-                    "message": "La ejecución fue cancelada durante el cierre de la aplicación.",
-                }
+                self.enqueue_log("Proceso cancelado por el usuario.")
             else:
-                self.final_status = {
-                    "success": True,
-                    "message": "Proceso finalizado exitosamente.",
-                }
-        except Exception as e:
-            get_logger("GUI").error("Error fatal en proceso: %s", e)
-            self.final_status = {"success": False, "message": str(e)}
+                self.enqueue_log("Proceso finalizado exitosamente.")
+        except Exception as exc:
+            self.enqueue_log(f"ERROR: {exc}")
         finally:
-            with self.state_lock:
-                self.is_running = False
+            pythoncom.CoUninitialize()
+            self.root.after(0, lambda: self._set_running_state(False))
 
-    def get_runtime_updates(self):
-        logs: list[str] = []
+    def request_stop(self) -> None:
+        if not self.is_running:
+            return
+        self.cancel_event.set()
+        self.enqueue_log("Se solicitó detener la ejecución actual.")
+
+    def enqueue_log(self, message: str) -> None:
+        if message:
+            self.log_queue.put(str(message))
+
+    def _flush_logs(self) -> None:
         while True:
             try:
-                logs.append(self.log_queue.get_nowait())
+                line = self.log_queue.get_nowait()
             except queue.Empty:
                 break
+            self.log_text.configure(state="normal")
+            self.log_text.insert("end", f"{line}\n")
+            self.log_text.see("end")
+            self.log_text.configure(state="disabled")
 
-        return {
-            "logs": logs,
-            "is_running": self.is_running,
-            "final_status": self.final_status,
-        }
+        self.root.after(200, self._flush_logs)
 
-    def request_stop(self):
-        self.cancel_event.set()
-        self.enqueue_log("Se solicitó detener el proceso actual.")
-        return {"success": True}
+    def _set_running_state(self, running: bool) -> None:
+        self.is_running = running
+        for widget in self.field_widgets:
+            widget.configure(state="disabled" if running else "normal")
 
-    def handle_window_closing(self):
-        if self.shutdown_started.is_set():
-            return
-
-        self.shutdown_started.set()
-        self.cancel_event.set()
-        self.enqueue_log("Cerrando aplicación. Se solicitó cancelar la ejecución activa.")
-
-        shutdown_thread = threading.Thread(
-            target=self._finish_shutdown,
-            name="gui-shutdown",
-            daemon=True,
+        self.run_button.configure(
+            state="disabled" if running else "normal",
+            bg="#8eb3df" if running else self.colors["blue"],
+            cursor="arrow" if running else "hand2",
         )
-        shutdown_thread.start()
+        self.stop_button.configure(
+            state="normal" if running else "disabled",
+            bg=self.colors["gold"] if running else "#c8d0da",
+            cursor="hand2" if running else "arrow",
+        )
+        self.save_button.configure(
+            state="disabled" if running else "normal",
+            bg="#edf2f7" if running else self.colors["card"],
+            cursor="arrow" if running else "hand2",
+        )
 
-    def _finish_shutdown(self):
-        worker = self.worker_thread
-        if worker and worker.is_alive():
-            worker.join(timeout=8)
+    def _on_close(self) -> None:
+        if self.is_running:
+            should_close = messagebox.askyesno(
+                "Cerrar",
+                "Hay una ejecución en curso. ¿Quieres cerrar la aplicación y cancelar el proceso?",
+            )
+            if not should_close:
+                return
+            self.cancel_event.set()
+            self.enqueue_log("Cerrando aplicación. Se canceló la ejecución activa.")
+            worker = self.worker_thread
+            if worker and worker.is_alive():
+                worker.join(timeout=8)
+            kill_processes(["msedgedriver.exe"])
+            time.sleep(1)
 
-        # Si algo quedó colgado, soltamos el servicio del driver y cerramos el proceso.
-        kill_processes(["msedgedriver.exe"])
-        time.sleep(1)
-        os._exit(0)
-
-    def get_config(self):
-        try:
-            return get_settings().to_dict()
-        except Exception as e:
-            return {"error": str(e)}
-
-    def save_config(self, data):
-        try:
-            self.settings_manager.save_settings(data)
-            return {"success": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        self.root.destroy()
 
 
-def start_gui():
-    api = ProcessorAPI()
-    html_path = get_resource_path(os.path.join("src", "gui", "index.html"))
-
-    window = webview.create_window(
-        "EssilorLuxottica - HDA Automation",
-        html_path,
-        js_api=api,
-        width=1200,
-        height=800,
-        background_color="#122033",
-        confirm_close=True,
-    )
-
-    api.set_window(window)
-    add_gui_callback(api.enqueue_log)
-    window.events.closing += api.handle_window_closing
-    webview.start(debug=False)
+def start_gui() -> None:
+    root = tk.Tk()
+    icon_path = get_resource_path("src/gui/icon.png")
+    if icon_path.exists():
+        icon_image = tk.PhotoImage(file=str(icon_path))
+        root.iconphoto(True, icon_image)
+        root._icon_image_ref = icon_image
+    AutomationApp(root)
+    root.mainloop()
 
 
 if __name__ == "__main__":

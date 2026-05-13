@@ -399,6 +399,7 @@ class HDAClient:
         self._pause(2.0)
         self.driver.switch_to.active_element.send_keys(Keys.ENTER)
         self._pause(3.0)
+        self._dismiss_known_issue_prompt_if_present()
 
         # Dropdown dentro del modal
         self.logger.info("Abriendo dropdown de nuevo estado...")
@@ -461,9 +462,65 @@ class HDAClient:
             
         if not exec_clicked:
             raise TimeoutException("No se encontró el botón 'Ejecutar'.")
-        
+
+        self._dismiss_known_issue_prompt_if_present()
         self._pause(5.0)
         self.logger.info("Ticket %s actualizado a '%s' exitosamente.", ticket_id, target_status)
+
+    def _dismiss_known_issue_prompt_if_present(self, timeout: float = 3.0) -> bool:
+        """Descarta el popup de known issues si aparece, eligiendo 'No' por seguridad."""
+        if not self.driver:
+            raise RuntimeError("Browser session not started.")
+
+        end_time = time.time() + timeout
+        trigger_phrases = (
+            "known issue",
+            "known issues",
+            "add this ticket to the known issues",
+            "mark this ticket as erroneous",
+            "marcar este ticket como errone",
+            "marcar este ticket como erróne",
+        )
+
+        while time.time() < end_time:
+            windows = self.driver.find_elements(
+                By.XPATH,
+                "//div[contains(@class,'x-window') and not(contains(@style,'display: none'))]",
+            )
+
+            for window in windows:
+                if not window.is_displayed():
+                    continue
+
+                window_text = " ".join(window.text.split()).strip()
+                normalized_text = window_text.casefold()
+                if not any(phrase in normalized_text for phrase in trigger_phrases):
+                    continue
+
+                self.logger.warning("Known issues popup detectado: %s", window_text)
+
+                no_button_candidates = window.find_elements(
+                    By.XPATH,
+                    ".//span[normalize-space()='No']/ancestor::*[self::a or self::button][1] | "
+                    ".//span[normalize-space()='NO']/ancestor::*[self::a or self::button][1] | "
+                    ".//span[normalize-space()='No']/ancestor::a[1]",
+                )
+                visible_no_button = next(
+                    (button for button in no_button_candidates if button.is_displayed()),
+                    None,
+                )
+                if visible_no_button:
+                    self.driver.execute_script("arguments[0].click();", visible_no_button)
+                    self.logger.info("Popup de known issues descartado con 'No'.")
+                    self._pause(1.0)
+                    return True
+
+                self.logger.warning("No se encontró botón visible 'No' en popup de known issues.")
+                return False
+
+            time.sleep(0.25)
+
+        return False
 
     def _collect_grid_records_from_dom(self) -> list[TicketRecord]:
         """Extrae los datos basándose en visibilidad y previene sobrescritura de IDs."""

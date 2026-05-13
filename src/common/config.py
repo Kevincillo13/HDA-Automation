@@ -1,46 +1,6 @@
 import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
-
-
-import sys
-from pathlib import Path
-
-def get_resource_path(relative_path):
-    """Obtiene la ruta absoluta para recursos empaquetados, compatible con PyInstaller."""
-    if hasattr(sys, '_MEIPASS'):
-        return Path(sys._MEIPASS) / relative_path
-    return Path.cwd() / relative_path
-
-
-def get_app_base_dir() -> Path:
-    """Resuelve la carpeta externa de la app: junto al exe cuando está congelada."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path.cwd()
-
-
-def load_external_env() -> None:
-    """Carga .env externos priorizando archivos junto al exe/proyecto."""
-    base_dir = get_app_base_dir()
-    candidates = [
-        base_dir / ".env.local",
-        base_dir / ".env",
-        base_dir / "config" / ".env.local",
-        base_dir / "config" / ".env",
-        get_resource_path(os.path.join("config", ".env.local")),
-        get_resource_path(os.path.join("config", ".env")),
-    ]
-
-    for env_candidate in candidates:
-        if env_candidate.exists():
-            load_dotenv(str(env_candidate), override=False)
-            break
-
-load_external_env()
-
-
 from src.common.settings_manager import SettingsManager
 
 
@@ -53,12 +13,15 @@ def _get_int_env(name: str, default: int) -> int:
 
 @dataclass
 class Settings:
-    hda_url: str = os.getenv("HDA_URL", "")
+    hda_url: str = os.getenv(
+        "HDA_URL",
+        "https://helpdeskgbs.luxottica.com/HDAPortal_GBS/#/Page/APOperator",
+    )
     hda_username: str = os.getenv("HDA_USERNAME", "")
     hda_password: str = os.getenv("HDA_PASSWORD", "")
     browser_headless: bool = os.getenv("BROWSER_HEADLESS", "false").lower() == "true"
     browser_keep_open: bool = os.getenv("BROWSER_KEEP_OPEN", "true").lower() == "true"
-    browser_slow_mo_ms: int = _get_int_env("BROWSER_SLOW_MO_MS", 0)
+    browser_slow_mo_ms: int = _get_int_env("BROWSER_SLOW_MO_MS", 250)
     browser_window_width: int = _get_int_env("BROWSER_WINDOW_WIDTH", 1600)
     browser_window_height: int = _get_int_env("BROWSER_WINDOW_HEIGHT", 1200)
     browser_binary_path: str = os.getenv(
@@ -83,19 +46,19 @@ class Settings:
     mail_error_recipient: str = os.getenv("MAIL_ERROR_RECIPIENT", "")
     mail_bcc_recipient: str = os.getenv("MAIL_BCC_RECIPIENT", "")
     mail_subject_prefix: str = os.getenv("MAIL_SUBJECT_PREFIX", "[HDA BOT]")
-    smtp_host: str = os.getenv("SMTP_HOST", "")
-    smtp_port: int = _get_int_env("SMTP_PORT", 0)
-    smtp_username: str = os.getenv("SMTP_USERNAME", "")
-    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
-    smtp_sender: str = os.getenv("SMTP_SENDER", "")
+    smtp_host: str = os.getenv("SMTP_HOST", "smtp.office365.com")
+    smtp_port: int = _get_int_env("SMTP_PORT", 587)
+    smtp_username: str = os.getenv("SMTP_USERNAME", "contimpro03@essilorluxottica.id")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "Essilux2026!")
+    smtp_sender: str = os.getenv("SMTP_SENDER", "contimpro03@essilorluxottica.id")
     smtp_use_tls: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
     smtp_use_ssl: bool = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
     sap_username_fms: str = os.getenv("SAP_USERNAME_FMS", "")
     sap_password_fms: str = os.getenv("SAP_PASSWORD_FMS", "")
     sap_username_afs: str = os.getenv("SAP_USERNAME_AFS", "")
     sap_password_afs: str = os.getenv("SAP_PASSWORD_AFS", "")
-    sap_connection_name_fms: str = os.getenv("SAP_CONNECTION_NAME_FMS", "")
-    sap_connection_name_afs: str = os.getenv("SAP_CONNECTION_NAME_AFS", "")
+    sap_connection_name_fms: str = os.getenv("SAP_CONNECTION_NAME_FMS", "FMS RP1")
+    sap_connection_name_afs: str = os.getenv("SAP_CONNECTION_NAME_AFS", "AFS LUP")
     sap_client_fms: str = os.getenv("SAP_CLIENT_FMS", "500")
     sap_client_afs: str = os.getenv("SAP_CLIENT_AFS", "400")
     sap_language: str = os.getenv("SAP_LANGUAGE", "EN")
@@ -107,13 +70,13 @@ class Settings:
     )
 
     def to_dict(self) -> dict:
-        """Convierte los ajustes a un diccionario para la GUI."""
         from dataclasses import asdict
+
         return asdict(self)
 
 
 def get_settings() -> Settings:
-    """Retorna los ajustes cargados desde ENV y sobreescritos por el JSON de la APP."""
+    """Retorna los ajustes cargados desde defaults fijos y sobreescritos por el archivo local."""
     settings = Settings()
     manager = SettingsManager()
     manager.update_from_env(settings)

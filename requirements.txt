@@ -1,6 +1,4 @@
 pdfplumber
 openpyxl
-python-dotenv
 selenium
 pywin32
-pywebview

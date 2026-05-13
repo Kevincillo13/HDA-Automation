@@ -14,16 +14,21 @@ def _get_settings_base_dir() -> Path:
 class SettingsManager:
     """Maneja la persistencia de la configuración del usuario en un archivo JSON."""
     
-    def __init__(self, settings_file: str = "app_settings.json"):
+    def __init__(self, settings_file: str = "bot_settings.json"):
         self.settings_path = _get_settings_base_dir() / settings_file
+        self.legacy_settings_path = _get_settings_base_dir() / "app_settings.json"
 
     def load_settings(self) -> Dict[str, Any]:
         """Carga los ajustes desde el archivo JSON si existe."""
-        if not self.settings_path.exists():
+        settings_path = self.settings_path
+        if not settings_path.exists() and self.legacy_settings_path.exists():
+            settings_path = self.legacy_settings_path
+
+        if not settings_path.exists():
             return {}
         
         try:
-            with open(self.settings_path, "r", encoding="utf-8") as f:
+            with open(settings_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             print(f"Error cargando settings: {e}")
