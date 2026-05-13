@@ -123,6 +123,18 @@ class SMTPMailClient(MailClient):
     def fetch_bot_responses(self) -> list:
         raise NotImplementedError
 
+    def test_connection(self) -> None:
+        """Verifica host, autenticacion y sesion SMTP sin enviar correo."""
+        with self._connect() as smtp:
+            supports_auth = "auth" in (smtp.esmtp_features or {})
+            if (
+                self.settings.smtp_username
+                and self.settings.smtp_password
+                and supports_auth
+            ):
+                smtp.login(self.settings.smtp_username, self.settings.smtp_password)
+            smtp.noop()
+
     def _connect(self) -> smtplib.SMTP:
         host = self.settings.smtp_host
         port = self.settings.smtp_port

@@ -1,4 +1,5 @@
 import queue
+import smtplib
 import threading
 import time
 import tkinter as tk
@@ -12,7 +13,10 @@ from src.common.config import get_settings
 from src.common.logger import add_gui_callback
 from src.common.settings_manager import SettingsManager
 from src.common.system import kill_processes
+from src.hda_web.client import HDAClient
 from src.hda_web.ticket_processing import process_all_tickets
+from src.mailer.client import SMTPMailClient
+from src.sap.client import SAPGuiClient
 
 
 def get_resource_path(relative_path: str) -> Path:
@@ -46,8 +50,11 @@ class AutomationApp:
         self.cancel_event = threading.Event()
         self.worker_thread: threading.Thread | None = None
         self.is_running = False
+        self.last_preflight_ok = False
         self.fields: dict[str, tk.StringVar] = {}
-        self.field_widgets: list[tk.Entry] = []
+        self.field_widgets: list[tk.Widget] = []
+        self.secret_entries: dict[str, tk.Entry] = {}
+        self.secret_toggle_buttons: dict[str, tk.Button] = {}
 
         self._build_ui()
         self._load_saved_values()
@@ -108,8 +115,11 @@ class AutomationApp:
             ).grid(row=index, column=0, sticky="w", padx=(0, 16), pady=8)
 
             variable = tk.StringVar()
+            field_container = tk.Frame(form, bg=self.colors["card"])
+            field_container.grid(row=index, column=1, sticky="ew", pady=8)
+
             entry = tk.Entry(
-                form,
+                field_container,
                 textvariable=variable,
                 width=56,
                 show="*" if secret else "",
@@ -123,9 +133,30 @@ class AutomationApp:
                 insertbackground="#102033",
                 font=("Segoe UI", 10),
             )
-            entry.grid(row=index, column=1, sticky="ew", pady=8, ipady=8)
+            entry.pack(side="left", fill="x", expand=True, ipady=8)
             self.fields[key] = variable
             self.field_widgets.append(entry)
+
+            if secret:
+                toggle_button = tk.Button(
+                    field_container,
+                    text="Ver",
+                    command=lambda field_key=key: self._toggle_secret_visibility(field_key),
+                    relief="flat",
+                    bd=0,
+                    padx=12,
+                    pady=8,
+                    bg="#e7eef5",
+                    fg=self.colors["navy"],
+                    activebackground="#d8e4f0",
+                    activeforeground=self.colors["navy"],
+                    font=("Segoe UI", 9, "bold"),
+                    cursor="hand2",
+                )
+                toggle_button.pack(side="left", padx=(8, 0))
+                self.secret_entries[key] = entry
+                self.secret_toggle_buttons[key] = toggle_button
+                self.field_widgets.append(toggle_button)
 
         form.columnconfigure(1, weight=1)
 
@@ -151,6 +182,16 @@ class AutomationApp:
             active_bg="#154d8a",
         )
         self.run_button.pack(side="left", padx=(8, 0))
+
+        self.preflight_button = self._make_button(
+            button_row,
+            text="Verificar accesos",
+            command=self.run_preflight,
+            bg=self.colors["cyan"],
+            fg="#ffffff",
+            active_bg="#008ca4",
+        )
+        self.preflight_button.pack(side="left", padx=(8, 0))
 
         self.stop_button = self._make_button(
             button_row,
@@ -262,6 +303,16 @@ class AutomationApp:
             state=state,
         )
 
+    def _toggle_secret_visibility(self, key: str) -> None:
+        entry = self.secret_entries.get(key)
+        button = self.secret_toggle_buttons.get(key)
+        if entry is None or button is None:
+            return
+
+        hidden = bool(entry.cget("show"))
+        entry.configure(show="" if hidden else "*")
+        button.configure(text="Ocultar" if hidden else "Ver")
+
     def _load_saved_values(self) -> None:
         settings = get_settings()
         self.fields["hda_username"].set(settings.hda_username)
@@ -318,6 +369,9 @@ class AutomationApp:
         if not self.save_settings(notify=False):
             return
 
+        if not self._run_preflight_checks(show_success=False):
+            return
+
         self.is_running = True
         self.cancel_event.clear()
         self._set_running_state(True)
@@ -350,6 +404,91 @@ class AutomationApp:
         self.cancel_event.set()
         self.enqueue_log("Se solicitó detener la ejecución actual.")
 
+    def run_preflight(self) -> None:
+        if self.is_running:
+            return
+        if not self.save_settings(notify=False):
+            return
+        self._run_preflight_checks(show_success=True)
+
+    def _run_preflight_checks(self, show_success: bool) -> bool:
+        self.enqueue_log("Verificando accesos de HDA, SAP y SMTP...")
+        try:
+            self._check_hda_access()
+            self.enqueue_log("OK | HDA login correcto.")
+
+            self._check_sap_access("FMS")
+            self.enqueue_log("OK | SAP FMS login correcto.")
+
+            self._check_sap_access("AFS")
+            self.enqueue_log("OK | SAP AFS login correcto.")
+
+            self._check_smtp_access()
+            self.enqueue_log("OK | SMTP autenticado correctamente.")
+        except Exception as exc:
+            self.last_preflight_ok = False
+            self.enqueue_log(f"ERROR preflight: {exc}")
+            messagebox.showerror(
+                "Validación fallida",
+                f"No se pudo validar uno de los accesos.\n\n{exc}\n\nLa automatización no se iniciará.",
+            )
+            return False
+
+        self.last_preflight_ok = True
+        if show_success:
+            messagebox.showinfo(
+                "Validación correcta",
+                "HDA, SAP y SMTP fueron validados correctamente.",
+            )
+        return True
+
+    def _check_hda_access(self) -> None:
+        client = HDAClient(get_settings())
+        try:
+            client.start()
+            client.login()
+            if client.is_login_screen_visible():
+                raise RuntimeError("HDA rechazó las credenciales o no avanzó después del login.")
+            client.click_payments_tile()
+        finally:
+            client.close()
+
+    def _check_sap_access(self, system_group: str) -> None:
+        sap = SAPGuiClient(get_settings())
+        try:
+            tcode = sap.verify_access(system_group)
+            self.enqueue_log(f"OK | SAP {system_group} listo y navegó a {tcode}.")
+        finally:
+            sap.close()
+
+    def _check_smtp_access(self) -> None:
+        try:
+            SMTPMailClient(get_settings()).test_connection()
+        except smtplib.SMTPAuthenticationError as exc:
+            raise RuntimeError(
+                "Correo/SMTP rechazo las credenciales. Revisa Usuario correo y Contrasena correo."
+            ) from exc
+        except smtplib.SMTPException as exc:
+            raise RuntimeError(
+                f"Correo/SMTP no pudo autenticarse correctamente: {exc}"
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"Correo/SMTP no pudo conectarse al servidor configurado: {exc}"
+            ) from exc
+
+    def _format_preflight_error(self, exc: Exception) -> str:
+        message = str(exc).strip()
+        if not message:
+            return "La validacion fallo por un error no especificado."
+
+        normalized = message.casefold()
+        if "authentication unsuccessful" in normalized or "535 5.7.139" in normalized:
+            return "Correo/SMTP rechazo las credenciales. Revisa Usuario correo y Contrasena correo."
+        if "prod.outlook.com" in normalized and "credential" in normalized:
+            return "Correo/SMTP rechazo la autenticacion. Revisa Usuario correo y Contrasena correo."
+        return message
+
     def enqueue_log(self, message: str) -> None:
         if message:
             self.log_queue.put(str(message))
@@ -375,6 +514,11 @@ class AutomationApp:
         self.run_button.configure(
             state="disabled" if running else "normal",
             bg="#8eb3df" if running else self.colors["blue"],
+            cursor="arrow" if running else "hand2",
+        )
+        self.preflight_button.configure(
+            state="disabled" if running else "normal",
+            bg="#7fd0dc" if running else self.colors["cyan"],
             cursor="arrow" if running else "hand2",
         )
         self.stop_button.configure(

@@ -103,8 +103,23 @@ class SAPGuiClient:
         self._fill_login_form(username, password, client_number)
         self._handle_multiple_logon_popup()
         self.session = self._refresh_active_session()
+        self._assert_login_succeeded_v2(expected_username=username)
         self.logger.info("SAP session ready for automation.")
         return self.session
+
+    def verify_access(self, system_group: str) -> str:
+        """Perform a functional SAP access check for the given system group."""
+        tcode = self._resolve_tcode(system_group)
+        self.start()
+        self.login(system_group)
+        self.open_tcode(tcode)
+        self._assert_tcode_opened_v2(tcode)
+        self.logger.info(
+            "SAP access preflight succeeded | system_group=%s | tcode=%s",
+            system_group,
+            tcode,
+        )
+        return tcode
 
     def open_validation_context(self, csv_path: str) -> tuple[str, str]:
         """Login to the correct SAP system and open the validation TCode for a CSV."""
@@ -1303,6 +1318,203 @@ class SAPGuiClient:
         self.application = application
         self.connection = connection
         return connection.Children(0)
+
+    def _assert_login_succeeded(self) -> None:
+        session = self.get_session()
+
+        def _safe_find(element_id: str):
+            try:
+                return session.findById(element_id)
+            except Exception:
+                return None
+
+        login_user = _safe_find("wnd[0]/usr/txtRSYST-BNAME")
+        login_password = _safe_find("wnd[0]/usr/pwdRSYST-BCODE")
+        command_field = _safe_find("wnd[0]/tbar[0]/okcd")
+        status_bar = _safe_find("wnd[0]/sbar")
+
+        status_text = ""
+        if status_bar is not None:
+            try:
+                status_text = str(status_bar.Text).strip()
+            except Exception:
+                status_text = ""
+
+        normalized_status = status_text.casefold()
+        failure_markers = (
+            "no se pudo iniciar sesión",
+            "no se pudo iniciar sesion",
+            "logon not possible",
+            "name or password is incorrect",
+            "password is incorrect",
+            "contraseña",
+            "password",
+            "usuario",
+            "user",
+        )
+
+        if login_user is not None and login_password is not None:
+            raise RuntimeError(
+                f"SAP login failed: login screen still visible. Status bar: {status_text or '<empty>'}"
+            )
+
+        if any(marker in normalized_status for marker in failure_markers):
+            raise RuntimeError(
+                f"SAP login failed: {status_text or 'authentication was rejected'}"
+            )
+
+        if command_field is None:
+            raise RuntimeError(
+                f"SAP login could not be confirmed. Command field not available. Status bar: {status_text or '<empty>'}"
+            )
+
+    def _assert_login_succeeded_v2(self, expected_username: str | None = None, timeout_seconds: int = 8) -> None:
+        last_state = self._read_login_state_v2()
+
+        for _ in range(max(1, timeout_seconds)):
+            last_state = self._read_login_state_v2()
+            normalized_status = last_state["status_text"].casefold()
+            expected_user = (expected_username or "").strip().casefold()
+            session_user = last_state["session_user"].casefold()
+
+            failure_markers = (
+                "no se pudo iniciar sesión",
+                "no se pudo iniciar sesion",
+                "no se pudo iniciar sesiã³n",
+                "logon not possible",
+                "name or password is incorrect",
+                "password is incorrect",
+                "password logon no longer possible",
+                "contraseña",
+                "contraseã±a",
+                "incorrect",
+                "denied",
+                "rechaz",
+            )
+
+            if last_state["login_fields_visible"]:
+                if any(marker in normalized_status for marker in failure_markers) or last_state["status_type"] in {"E", "A"}:
+                    raise RuntimeError(
+                        f"SAP login failed: {last_state['status_text'] or 'authentication was rejected'}"
+                    )
+                time.sleep(1)
+                continue
+
+            if any(marker in normalized_status for marker in failure_markers) and last_state["status_type"] in {"E", "A", ""}:
+                raise RuntimeError(
+                    f"SAP login failed: {last_state['status_text'] or 'authentication was rejected'}"
+                )
+
+            if expected_user and session_user and session_user != expected_user:
+                raise RuntimeError(
+                    f"SAP login failed: session user mismatch ({last_state['session_user']} != {expected_username})."
+                )
+
+            if last_state["command_field_visible"]:
+                return
+
+            time.sleep(1)
+
+        raise RuntimeError(
+            "SAP login could not be confirmed. "
+            f"Command field not available. Status bar: {last_state['status_text'] or '<empty>'}"
+        )
+
+    def _assert_tcode_opened_v2(self, expected_tcode: str, timeout_seconds: int = 10) -> None:
+        normalized_expected = expected_tcode.strip().upper().removeprefix("/N").removeprefix("/n").lstrip("/")
+        last_state = self._read_navigation_state_v2()
+
+        for _ in range(max(1, timeout_seconds)):
+            last_state = self._read_navigation_state_v2()
+            current_tcode = last_state["transaction"].upper()
+            normalized_status = last_state["status_text"].casefold()
+
+            if current_tcode == normalized_expected:
+                return
+
+            if last_state["login_fields_visible"]:
+                raise RuntimeError(
+                    f"SAP TCode check failed: SAP returned to login screen. Status bar: {last_state['status_text'] or '<empty>'}"
+                )
+
+            failure_markers = (
+                "does not exist",
+                "no existe",
+                "not authorized",
+                "no autorizado",
+                "cannot be selected",
+                "no se puede seleccionar",
+                "not possible",
+                "incorrect",
+                "invalid",
+            )
+            if any(marker in normalized_status for marker in failure_markers) and last_state["status_type"] in {"E", "A", "W"}:
+                raise RuntimeError(
+                    f"SAP TCode check failed for {expected_tcode}: {last_state['status_text'] or 'navigation was rejected'}"
+                )
+
+            time.sleep(1)
+
+        raise RuntimeError(
+            "SAP TCode could not be confirmed. "
+            f"Expected={expected_tcode} | Current={last_state['transaction'] or '<unknown>'} | "
+            f"Status bar={last_state['status_text'] or '<empty>'}"
+        )
+
+    def _read_login_state_v2(self) -> dict[str, str | bool]:
+        session = self.get_session()
+        state = self._read_navigation_state_v2()
+        state["login_fields_visible"] = bool(
+            self._safe_find_v2(session, "wnd[0]/usr/txtRSYST-BNAME")
+            and self._safe_find_v2(session, "wnd[0]/usr/pwdRSYST-BCODE")
+        )
+        state["command_field_visible"] = self._safe_find_v2(session, "wnd[0]/tbar[0]/okcd") is not None
+        return state
+
+    def _read_navigation_state_v2(self) -> dict[str, str | bool]:
+        session = self.get_session()
+        info = getattr(session, "Info", None)
+        status_bar = self._safe_find_v2(session, "wnd[0]/sbar")
+
+        transaction = ""
+        session_user = ""
+        status_text = ""
+        status_type = ""
+
+        if info is not None:
+            try:
+                transaction = str(getattr(info, "Transaction", "")).strip()
+            except Exception:
+                transaction = ""
+            try:
+                session_user = str(getattr(info, "User", "")).strip()
+            except Exception:
+                session_user = ""
+
+        if status_bar is not None:
+            try:
+                status_text = str(status_bar.Text).strip()
+            except Exception:
+                status_text = ""
+            try:
+                status_type = str(getattr(status_bar, "MessageType", "")).strip().upper()
+            except Exception:
+                status_type = ""
+
+        return {
+            "transaction": transaction,
+            "session_user": session_user,
+            "status_text": status_text,
+            "status_type": status_type,
+            "login_fields_visible": False,
+            "command_field_visible": False,
+        }
+
+    def _safe_find_v2(self, session: Any, element_id: str) -> Any | None:
+        try:
+            return session.findById(element_id)
+        except Exception:
+            return None
 
 
 def test_sap_login() -> None:
