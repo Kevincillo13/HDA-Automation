@@ -60,19 +60,41 @@ class AP15Builder:
 
         output_paths: list[str] = []
         suffix = f"_{file_suffix}" if file_suffix else ""
-        for (mail_group, vendor_num, currency), grouped in grouped_records.items():
-            base_name = f"AP15_{mail_group}_{vendor_num}_{currency}{suffix}"
-            workbook_path = self.output_dir / f"{base_name}.xlsx"
-            csv_path = self.output_dir / f"{base_name}.csv"
+        
+        # Instantiate Excel COM once if available, to avoid massive startup overhead
+        excel_app = None
+        if win32com is not None:
+            try:
+                excel_app = win32com.client.DispatchEx("Excel.Application")
+                excel_app.Visible = False
+                excel_app.DisplayAlerts = False
+            except Exception:
+                excel_app = None
 
-            workbook = load_workbook(self.template_path)
-            worksheet = workbook.active
-            self._fill_template_rows(worksheet, grouped)
-            workbook.save(workbook_path)
-            workbook.close()
+        try:
+            for (mail_group, vendor_num, currency), grouped in grouped_records.items():
+                base_name = f"AP15_{mail_group}_{vendor_num}_{currency}{suffix}"
+                workbook_path = self.output_dir / f"{base_name}.xlsx"
+                csv_path = self.output_dir / f"{base_name}.csv"
 
-            self._export_workbook_to_csv(workbook_path, csv_path)
-            output_paths.append(str(csv_path))
+                workbook = load_workbook(self.template_path)
+                worksheet = workbook.active
+                self._fill_template_rows(worksheet, grouped)
+                workbook.save(workbook_path)
+                workbook.close()
+
+                if excel_app is not None:
+                    self._export_workbook_to_csv_via_excel_instance(excel_app, workbook_path, csv_path)
+                else:
+                    self._export_workbook_to_csv_via_python(workbook_path, csv_path)
+                    
+                output_paths.append(str(csv_path))
+        finally:
+            if excel_app is not None:
+                try:
+                    excel_app.Quit()
+                except Exception:
+                    pass
 
         return output_paths
 
@@ -121,18 +143,7 @@ class AP15Builder:
             worksheet[f"AB{index}"] = ""
             worksheet[f"AC{index}"] = ""
 
-    def _export_workbook_to_csv(self, workbook_path: Path, csv_path: Path) -> None:
-        if win32com is not None:
-            self._export_workbook_to_csv_via_excel(workbook_path, csv_path)
-            return
-
-        # Fallback only when Excel COM is unavailable.
-        self._export_workbook_to_csv_via_python(workbook_path, csv_path)
-
-    def _export_workbook_to_csv_via_excel(self, workbook_path: Path, csv_path: Path) -> None:
-        excel = win32com.client.DispatchEx("Excel.Application")
-        excel.Visible = False
-        excel.DisplayAlerts = False
+    def _export_workbook_to_csv_via_excel_instance(self, excel: Any, workbook_path: Path, csv_path: Path) -> None:
         workbook = None
         try:
             workbook = excel.Workbooks.Open(str(workbook_path.resolve()))
@@ -144,7 +155,6 @@ class AP15Builder:
         finally:
             if workbook is not None:
                 workbook.Close(SaveChanges=False)
-            excel.Quit()
 
     def _export_workbook_to_csv_via_python(self, workbook_path: Path, csv_path: Path) -> None:
         workbook = load_workbook(workbook_path, data_only=True)

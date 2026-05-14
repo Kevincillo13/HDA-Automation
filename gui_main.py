@@ -439,25 +439,37 @@ class AutomationApp:
         if not self.save_settings(notify=False):
             return
 
-        if not self._run_preflight_checks(show_success=False):
-            return
-
         self.is_running = True
         self.cancel_event.clear()
         self._set_running_state(True)
-        self.enqueue_log("Iniciando automatización...")
+        self.enqueue_log("Validando accesos antes de iniciar la automatizacion...")
 
         self.worker_thread = threading.Thread(
-            target=self._worker_main,
+            target=self._automation_with_preflight_worker,
             name="automation-worker",
             daemon=True,
         )
         self.worker_thread.start()
 
-    def _worker_main(self) -> None:
+    def _automation_with_preflight_worker(self) -> None:
         pythoncom.CoInitialize()
         self._prevent_sleep()
         try:
+            ok, message = self._run_preflight_checks()
+            if not ok:
+                self.last_preflight_ok = False
+                self.enqueue_log(f"ERROR preflight: {message}")
+                self.root.after(
+                    0,
+                    lambda m=message: messagebox.showerror(
+                        "Validacion fallida",
+                        f"No se pudo validar uno de los accesos.\n\n{m}\n\nLa automatizacion no se iniciara.",
+                    ),
+                )
+                return
+
+            self.last_preflight_ok = True
+            self.enqueue_log("Iniciando automatizacion...")
             process_all_tickets(abort_event=self.cancel_event)
             if self.cancel_event.is_set():
                 self.enqueue_log("Proceso cancelado por el usuario.")
@@ -474,16 +486,51 @@ class AutomationApp:
         if not self.is_running:
             return
         self.cancel_event.set()
-        self.enqueue_log("Se solicitó detener la ejecución actual.")
+        self.enqueue_log("Se solicito detener la ejecucion actual.")
 
     def run_preflight(self) -> None:
         if self.is_running:
             return
         if not self.save_settings(notify=False):
             return
-        self._run_preflight_checks(show_success=True)
+        self.is_running = True
+        self.cancel_event.clear()
+        self._set_running_state(True)
+        self.worker_thread = threading.Thread(
+            target=self._preflight_only_worker,
+            name="preflight-worker",
+            daemon=True,
+        )
+        self.worker_thread.start()
 
-    def _run_preflight_checks(self, show_success: bool) -> bool:
+    def _preflight_only_worker(self) -> None:
+        pythoncom.CoInitialize()
+        try:
+            ok, message = self._run_preflight_checks()
+            if ok:
+                self.last_preflight_ok = True
+                self.root.after(
+                    0,
+                    lambda: messagebox.showinfo(
+                        "Validacion correcta",
+                        "HDA, SAP y SMTP fueron validados correctamente.",
+                    ),
+                )
+            else:
+                self.last_preflight_ok = False
+                self.enqueue_log(f"ERROR preflight: {message}")
+                self.root.after(
+                    0,
+                    lambda m=message: messagebox.showerror(
+                        "Validacion fallida",
+                        f"No se pudo validar uno de los accesos.\n\n{m}\n\nLa automatizacion no se iniciara.",
+                    ),
+                )
+        finally:
+            pythoncom.CoUninitialize()
+            self.root.after(0, lambda: self._set_running_state(False))
+
+    def _run_preflight_checks(self) -> tuple[bool, str]:
         self.enqueue_log("Verificando accesos de HDA, SAP y SMTP...")
         try:
             self._check_hda_access()
@@ -497,22 +544,9 @@ class AutomationApp:
 
             self._check_smtp_access()
             self.enqueue_log("OK | SMTP autenticado correctamente.")
+            return True, ""
         except Exception as exc:
-            self.last_preflight_ok = False
-            self.enqueue_log(f"ERROR preflight: {exc}")
-            messagebox.showerror(
-                "Validación fallida",
-                f"No se pudo validar uno de los accesos.\n\n{exc}\n\nLa automatización no se iniciará.",
-            )
-            return False
-
-        self.last_preflight_ok = True
-        if show_success:
-            messagebox.showinfo(
-                "Validación correcta",
-                "HDA, SAP y SMTP fueron validados correctamente.",
-            )
-        return True
+            return False, self._format_preflight_error(exc)
 
     def _check_hda_access(self) -> None:
         client = HDAClient(get_settings())
