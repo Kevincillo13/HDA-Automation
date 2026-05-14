@@ -343,8 +343,11 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
         summary_path = _write_human_summary(str(run_output_dir), run_id, started_at, datetime.now(), one_time_checks, valid_tickets, invalid_tickets, generated_csvs)
         _send_final_reports(settings, mail_client, logger, run_id, started_at, run_output_dir, one_time_checks, valid_tickets, invalid_tickets, generated_csvs, summary_path)
     except Exception as exc:
-        logger.exception(f"Fatal error: {exc}")
-        _send_error_email(settings, mail_client, logger, run_id, started_at, current_stage, exc, log_path)
+        if abort_event and abort_event.is_set():
+            logger.info("Execution forcefully aborted by user. Suppressing error email.")
+        else:
+            logger.exception(f"Fatal error: {exc}")
+            _send_error_email(settings, mail_client, logger, run_id, started_at, current_stage, exc, log_path)
     finally: client.close()
 
 

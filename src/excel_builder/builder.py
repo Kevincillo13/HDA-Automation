@@ -73,7 +73,7 @@ class AP15Builder:
 
         try:
             for (mail_group, vendor_num, currency), grouped in grouped_records.items():
-                base_name = f"AP15_{mail_group}_{vendor_num}_{currency}{suffix}"
+                base_name = f"{mail_group}_{vendor_num}_{currency}{suffix}"
                 workbook_path = self.output_dir / f"{base_name}.xlsx"
                 csv_path = self.output_dir / f"{base_name}.csv"
 

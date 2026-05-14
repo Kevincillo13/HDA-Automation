@@ -485,8 +485,20 @@ class AutomationApp:
     def request_stop(self) -> None:
         if not self.is_running:
             return
+        should_stop = messagebox.askyesno(
+            "Confirmar",
+            "¿Estás seguro de detener el proceso?\n\nEsto cerrará instantáneamente el navegador, SAP y Excel."
+        )
+        if not should_stop:
+            return
+            
         self.cancel_event.set()
-        self.enqueue_log("Se solicito detener la ejecucion actual.")
+        self.enqueue_log("Se solicitó detener la ejecución de forma forzada. Abortando procesos...")
+        
+        try:
+            kill_processes(["msedge.exe", "msedgedriver.exe", "saplogon.exe", "sapgui.exe", "excel.exe"])
+        except Exception as e:
+            self.enqueue_log(f"Fallo al intentar matar procesos: {e}")
 
     def run_preflight(self) -> None:
         if self.is_running:

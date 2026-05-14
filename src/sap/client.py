@@ -619,9 +619,9 @@ class SAPGuiClient:
 
     def infer_system_group_from_csv_path(self, csv_path: str) -> str:
         csv_name = Path(csv_path).name.upper()
-        if "_FMS_" in csv_name:
+        if "FMS" in csv_name:
             return "FMS"
-        if "_AFS_" in csv_name:
+        if "AFS" in csv_name:
             return "AFS"
         raise ValueError(f"Unable to infer SAP system group from CSV name: {csv_name}")
 
