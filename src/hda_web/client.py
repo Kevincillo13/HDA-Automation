@@ -50,8 +50,6 @@ class HDAClient:
         # Cambiado a SEVERE para silenciar la basura de ExtJS en la terminal
         options.set_capability("goog:loggingPrefs", {"browser": "SEVERE", "performance": "INFO"})
         options.add_argument("--log-level=3")
-        options.add_argument("--start-maximized")
-        options.add_argument("--force-device-scale-factor=1")
         
         if self.settings.browser_headless:
             options.add_argument("--headless=new")
@@ -244,6 +242,9 @@ class HDAClient:
         self._pause()
 
         strategies = [
+            ("context menu open option", lambda: self._open_ticket_from_context_menu(row, ticket_id)),
+            ("double click ticket cell", lambda: ActionChains(self.driver).double_click(ticket_cell).perform()),
+            ("double click row", lambda: ActionChains(self.driver).double_click(row).perform()),
             ("javascript double click ticket cell", lambda: self.driver.execute_script(
                 """
                 const target = arguments[0];
@@ -251,9 +252,6 @@ class HDAClient:
                 """,
                 ticket_cell,
             )),
-            ("double click ticket cell", lambda: ActionChains(self.driver).double_click(ticket_cell).perform()),
-            ("context menu open option", lambda: self._open_ticket_from_context_menu(row, ticket_id)),
-            ("double click row", lambda: ActionChains(self.driver).double_click(row).perform()),
             ("single click row and press enter", lambda: self._open_ticket_with_enter(row)),
         ]
 
@@ -311,7 +309,7 @@ class HDAClient:
     def update_ticket_status_ui(self, ticket_id: str, target_status: str, reasons: list[str] | None = None) -> None:
         """
         Ejecuta la coreografía de UI en HDA para cambiar el estado de un ticket.
-        target_status: 'Suspend' o 'In progress'
+        target_status: 'Suspended' o 'In progress'
         """
         if not self.driver:
             raise RuntimeError("Browser session not started.")
@@ -322,9 +320,9 @@ class HDAClient:
         # 1. Autoasignar
         try:
             self.logger.info("Paso 1: Autoasignando...")
-            auto_btn_xpath = "//a[@aria-label='Autoasignar...' and @aria-hidden='false']"
+            auto_btn_xpath = "//a[contains(@aria-label, 'Autoasignar') or contains(@aria-label, 'Take ownership') or contains(@aria-label, 'Assign')]"
             auto_btn = WebDriverWait(self.driver, 5).until(
-                ec.presence_of_element_located((By.XPATH, auto_btn_xpath))
+                ec.element_to_be_clickable((By.XPATH, auto_btn_xpath))
             )
             self.driver.execute_script("arguments[0].click();", auto_btn)
             self._pause(2.0)
@@ -335,7 +333,7 @@ class HDAClient:
             self.logger.info("Autoasignar no disponible o ya asignado.")
 
         # 2. Escribir Solución (SOLO PARA SUSPENDED)
-        if target_status.lower() == "suspend":
+        if target_status.lower() == "suspended":
             self._pause(1.0)
             self.logger.info("Paso 2: Escribiendo solución para suspensión...")
             solution_iframe_css = 'iframe[id$="_SolutionHTML_SolutionHTML_ifr"]'
@@ -394,8 +392,8 @@ class HDAClient:
 
         # 4. Cambiar Estado
         self.logger.info("Paso final: Cambiando estado a '%s'...", target_status)
-        change_status_btn_xpath = "//a[@aria-label='Cambiar estado...' and @aria-hidden='false']"
-        status_btn = wait.until(ec.presence_of_element_located((By.XPATH, change_status_btn_xpath)))
+        change_status_btn_xpath = "//a[contains(@aria-label, 'Cambiar estado') or contains(@aria-label, 'Change status')]"
+        status_btn = wait.until(ec.element_to_be_clickable((By.XPATH, change_status_btn_xpath)))
         self.driver.execute_script("arguments[0].click();", status_btn)
         
         self._pause(2.0)
@@ -833,7 +831,7 @@ class HDAClient:
             ec.presence_of_element_located(
                 (
                     By.XPATH,
-                    "//div[contains(@class,'x-menu') and (@aria-hidden='false' or contains(@style,'visibility: visible'))]//span[contains(@class,'x-menu-item-text') and normalize-space()='Abrir']",
+                    "//div[contains(@class,'x-menu') and (@aria-hidden='false' or contains(@style,'visibility: visible'))]//span[contains(@class,'x-menu-item-text') and (normalize-space()='Abrir' or normalize-space()='Edit' or normalize-space()='Open')]",
                 )
             )
         )

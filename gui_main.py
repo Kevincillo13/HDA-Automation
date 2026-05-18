@@ -442,34 +442,19 @@ class AutomationApp:
         self.is_running = True
         self.cancel_event.clear()
         self._set_running_state(True)
-        self.enqueue_log("Validando accesos antes de iniciar la automatizacion...")
+        self.enqueue_log("Iniciando automatizacion...")
 
         self.worker_thread = threading.Thread(
-            target=self._automation_with_preflight_worker,
+            target=self._worker_main,
             name="automation-worker",
             daemon=True,
         )
         self.worker_thread.start()
 
-    def _automation_with_preflight_worker(self) -> None:
+    def _worker_main(self) -> None:
         pythoncom.CoInitialize()
         self._prevent_sleep()
         try:
-            ok, message = self._run_preflight_checks()
-            if not ok:
-                self.last_preflight_ok = False
-                self.enqueue_log(f"ERROR preflight: {message}")
-                self.root.after(
-                    0,
-                    lambda m=message: messagebox.showerror(
-                        "Validacion fallida",
-                        f"No se pudo validar uno de los accesos.\n\n{m}\n\nLa automatizacion no se iniciara.",
-                    ),
-                )
-                return
-
-            self.last_preflight_ok = True
-            self.enqueue_log("Iniciando automatizacion...")
             process_all_tickets(abort_event=self.cancel_event)
             if self.cancel_event.is_set():
                 self.enqueue_log("Proceso cancelado por el usuario.")

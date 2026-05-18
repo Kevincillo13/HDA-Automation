@@ -329,7 +329,7 @@ def process_all_tickets(abort_event: threading.Event = None) -> None:
             for item in invalid_tickets:
                 try:
                     client.open_ticket_by_id(item["ticket"].ticket_id)
-                    client.update_ticket_status_ui(item["ticket"].ticket_id, "Suspend", item.get("errors"))
+                    client.update_ticket_status_ui(item["ticket"].ticket_id, "Suspended", item.get("errors"))
                 finally: client.close_active_ticket_tab()
 
         if valid_tickets:
